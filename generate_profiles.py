@@ -369,8 +369,10 @@ def emit_module(d, metaclasses, warns):
         w(f'    _STEREO = "{d["profile"]}::{s.pkg}::{s.name}"')
         bm = ", ".join(f'"{b}"' for b in s.bases_meta)
         w("    _BASE_METACLASSES = (" + bm + ("," if bm else "") + ")")
-        if s.abstract:
-            w("    _ABSTRACT = True")
+        # always explicit: concrete stereotypes must not inherit the
+        # abstract guard of a folded abstract metaclass (e.g. TestCase ->
+        # U.Behavior is abstract in UML but the stereotype is concrete)
+        w(f"    _ABSTRACT = {str(bool(s.abstract))}")
         decls = [gen_tag(t, metaclasses, set(d["enums"]))
                  for t in sorted(s.tags)]
         if decls:

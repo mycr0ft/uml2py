@@ -145,14 +145,53 @@ typing, abstract guards, constraint metadata, no cross-profile shadowing).
 
 # Part 3: SysML v1 → v2 (first working emitter)
 
-The OMG transition document is already on disk:
-`/mnt/TBFox/SysML-v2-Release/doc/2b-SysML_v1_to_v2_Transformation.pdf`
-("SysML v2.0 Beta 4, Part 2: SysML v1 to SysML v2 Transformation",
-ptc/2025-04-07, machine-readable `SysMLv1Tov2.xmi` @ `…/20250201/`). It
-contains **79 normative `To*_Init` initializer mappings** and prose
-statements like "A SysML::Blocks::Block is mapped to a SysML v2
-PartDefinition."
+**Wave 2 covers 25+ additional initializer mappings.** The emitted v2 for a
+model exercising all of them parses cleanly with sysmlpy:
 
+```
+{'package': 1, 'part': 5, 'attribute': 1, 'enumeration': 1, 'port': 1,
+ 'item': 1, 'state': 1, 'action': 1, 'use_case': 2, 'requirement': 2,
+ 'connection': 2, 'verification': 1, 'metadata': 1, 'dependency': 3,
+ 'allocation': 1}
+```
+
+New mappings (all anchored to normative statements + the doc's own
+expected-textual-syntax examples):
+
+| SysML v1 | → SysML v2 emitted |
+|---|---|
+| Association / AssociationBlock | `connection def` with member ends |
+| Connector | `connection c connect p1 to p2;` |
+| BindingConnector | `binding b bind p1 = p2;` |
+| InterfaceBlock | `port def` |
+| Port typed/untyped | `port p : IB;` / `port p;` |
+| Actor | `part def` |
+| Signal / InformationItem | `item def` (+ item-typed properties) |
+| plain Class | `occurrence def` |
+| Property typed by plain Class | `occurrence` / `ref occurrence` |
+| Activity / OpaqueBehavior | `action def` with in/out parameters |
+| Operation | `perform action` with parameters (return → out, per doc example) |
+| StateMachine / Region / State / Pseudostate / FinalState | `state def { state …; transition … }` |
+| Transition | `transition t first s1 then s2;` |
+| InitialState | elided with comment (normative, SYSML2_-203) |
+| TestCase | `verification def` + `return verdict : VerificationCases::VerdictKind` |
+| Verify | `objective obj_X { verify Req; }` inside its TestCase |
+| DeriveReqt | `connection : DerivationConnections::Derivation connect …` |
+| Refine / Trace | `dependency from … to … { @RefineData { isRefine = true; } }` (local metadata stub stands in for SysMLv1Library) |
+| Allocate | `allocation def` with `end :>> source/target` + `allocate source.x to target.y;` |
+| Dependency / Realization / Abstraction | `dependency [name] from … to …;` |
+| UseCase / Include | `use case def` + `include use case : …;` |
+| PackageImport / ElementImport | honest elision comment (target grammar reader has no import) |
+
+`calibrate_v2.py` documents which textual forms the authoritative reader
+accepts (40+ snippets; e.g. sysmlpy has no `import`, transitions use
+`first … then …`, untyped ports count as parts in its summary).
+
+The OMG transition document is on disk
+(`2b-SysML_v1_to_v2_Transformation.pdf`, ptc/2025-04-07, Beta 4) with 79
+normative `To*_Init` initializer mappings and expected-syntax examples
+per mapping; `transition.txt` is the extracted text (kept out of the
+repository - reference corpus).
 `v1_to_v2.py` implements a clean-room emitter for the core structural core,
 each mapping anchored to the normative statement (quoted in the module
 docstring):
@@ -182,7 +221,7 @@ v2 textual notation and **parsed successfully by sysmlpy** — counts:
 satisfy counts as a requirement usage). Output kept at
 `vehicle_example_v2.sysml`.
 
-Remaining for a full transformation: the other ~68 initializers
+Remaining for a full transformation: ~30 initializers remain
 (BindingConnector→BindingConnectorAsUsage, FlowPort/FullPort/ProxyPort→port
 defs, ItemFlow, Allocate→AllocationUsage/Definition, Refine/Trace→Dependency
 + annotation, state machines, activities), multiplicity edge cases, and a
