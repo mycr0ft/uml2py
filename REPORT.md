@@ -221,11 +221,10 @@ v2 textual notation and **parsed successfully by sysmlpy** — counts:
 satisfy counts as a requirement usage). Output kept at
 `vehicle_example_v2.sysml`.
 
-Remaining for a full transformation: ~30 initializers remain
-(BindingConnector→BindingConnectorAsUsage, FlowPort/FullPort/ProxyPort→port
-defs, ItemFlow, Allocate→AllocationUsage/Definition, Refine/Trace→Dependency
-+ annotation, state machines, activities), multiplicity edge cases, and a
-real v1 XMI instance reader to feed the mapper instead of in-memory models.
+Remaining for a full transformation: ~30 initializers (mostly
+interactions/messages, FullPort/ProxyPort metadata, ItemFlow, Constraint
+internals, Slot/instance models), multiplicity edge cases, and a real
+v1 XMI instance reader to feed the mapper instead of in-memory models.
 
 ## Reproduce
 
