@@ -1,6 +1,7 @@
-# Exploration: building UML 2.5.1 into Python classes from the OMG XMI
+# Exploration: building UML 2.5.1 + SysML v1 profiles into Python from the OMG XMI
 
-**Date:** 2026-09-14 · **Status:** spike complete — 45/45 semantic checks pass
+**Date:** 2026-09-14 · **Status:** spike + profiles + v1→v2 emitter complete —
+45/45 UML, 21/21 profile, 6/6 v1→v2 checks pass
 
 ## Question
 
@@ -108,3 +109,91 @@ python check.py                              # generated pkg is stdlib-only
   v1→v2 mapping into sysmlpy — both build directly on this machinery.
 - Fun synergy: the generated hierarchy can render itself (inheritance tree /
   union lattice) via the plantuml.py/graphviz tooling.
+
+# Part 2: profiles (StandardProfile + SysML v1)
+
+`generate_profiles.py` emits **one module per profile** (separate namespaces —
+SysML's `Trace`/`Refine`/`Copy` must not shadow StandardProfile's):
+
+| Module | Contents |
+|---|---|
+| `gen/standard_profile.py` | 33 stereotypes (`Derive(Abstraction)`, `Document(File)`, `Metaclass(Class)`…) |
+| `gen/sysml.py` | **56 SysML v1 stereotypes**, 4 profile enums (ControlValueKind, FeatureDirectionKind, FlowDirectionKind, VerdictKind), 143 profile constraints as metadata |
+
+Key design: **stereotype = fold-in**. `Block(U.Class)` — applying the
+stereotype is Python instantiation; tagged values are `_Ref` descriptors
+(reusing the uml25 wiring machinery); `base_*` extension ends are consumed
+into the inheritance structure; required/optional extension data is carried
+in `_EXTENSIONS`; `AbstractRequirement(U.NamedElement)` gives every
+`Requirement` its `text`/`id` tagged values. Base-metaclass combinations that
+are C3-incompatible as Python inheritance (ControlOperator, TestCase:
+`Behavior`×`Operation`) fall back to the most-specific compatible subset,
+with the full set kept in `_BASE_METACLASSES` metadata.
+
+Serialization quirks handled (the two files differ):
+- `sysml.xmi` uses **https** namespaces and omits `xmi:type` on the Profile.
+- Generalization targets: attribute `general=` (StandardProfile) vs child
+  `<general xmi:idref="SysML.X">` (SysML, with `SysML.`-prefixed ids).
+- Constraint OCL: child `<body>` (StandardProfile) vs **`body` XML
+  attribute** (SysML); some constraints literally carry
+  `-- Cannot be expressed in OCL`.
+- Typed enums: `<type href>` vs type implied by `defaultValue` InstanceValue
+  (`SysML_dataType.FlowDirectionKind.inout`).
+
+`check_profiles.py`: 21/21 (folding, inheritance, tagged values, enum
+typing, abstract guards, constraint metadata, no cross-profile shadowing).
+
+# Part 3: SysML v1 → v2 (first working emitter)
+
+The OMG transition document is already on disk:
+`/mnt/TBFox/SysML-v2-Release/doc/2b-SysML_v1_to_v2_Transformation.pdf`
+("SysML v2.0 Beta 4, Part 2: SysML v1 to SysML v2 Transformation",
+ptc/2025-04-07, machine-readable `SysMLv1Tov2.xmi` @ `…/20250201/`). It
+contains **79 normative `To*_Init` initializer mappings** and prose
+statements like "A SysML::Blocks::Block is mapped to a SysML v2
+PartDefinition."
+
+`v1_to_v2.py` implements a clean-room emitter for the core structural core,
+each mapping anchored to the normative statement (quoted in the module
+docstring):
+
+| SysML v1 | → SysML v2 emitted |
+|---|---|
+| Block | `part def` |
+| Property typed by block (isComposite) | `part` / `ref part` with multiplicity |
+| Property untyped | `feature` |
+| ValueType | `attribute def` |
+| Property typed by DataType | `attribute` |
+| Enumeration + literals | `enum def { lits; }` |
+| Generalization | `:> Super` |
+| Comment / Requirement.text | `doc /* … */` |
+| Requirement (+id) | `requirement` (usage; v1 id as comment) |
+| Satisfy | `satisfy <n> : <req> by <part>;` |
+| ConstraintBlock | `constraint def` |
+
+Anything without a normative implemented mapping raises `UnmappedFeature`
+naming the v1 metaclass — the emitter refuses to guess.
+
+**End-to-end validation** (`check_v1_to_v2.py`, run under `~/sysmlpy/.venv`):
+a v1 model built with the generated classes (Blocks, parts, ValueType,
+Enumeration, Generalization, Requirement with text/id, Satisfy) is emitted as
+v2 textual notation and **parsed successfully by sysmlpy** — counts:
+`{'part': 3, 'attribute': 1, 'enumeration': 1, 'requirement': 2}` (the
+satisfy counts as a requirement usage). Output kept at
+`vehicle_example_v2.sysml`.
+
+Remaining for a full transformation: the other ~68 initializers
+(BindingConnector→BindingConnectorAsUsage, FlowPort/FullPort/ProxyPort→port
+defs, ItemFlow, Allocate→AllocationUsage/Definition, Refine/Trace→Dependency
++ annotation, state machines, activities), multiplicity edge cases, and a
+real v1 XMI instance reader to feed the mapper instead of in-memory models.
+
+## Reproduce
+
+```bash
+~/ams-gra-sim/.venv/bin/python generate.py           # UML core (lxml)
+~/ams-gra-sim/.venv/bin/python generate_profiles.py  # profiles (lxml + gen.uml25)
+python check.py                                      # 45 checks (stdlib only)
+python check_profiles.py                             # 21 checks
+~/sysmlpy/.venv/bin/python check_v1_to_v2.py         # 6 checks (needs sysmlpy)
+```

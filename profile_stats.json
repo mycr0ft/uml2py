@@ -1,0 +1,27 @@
+{
+  "modules": [
+    {
+      "profile": "StandardProfile",
+      "module": "gen/standard_profile.py",
+      "stereotypes": 33,
+      "enums": [],
+      "lines": 198
+    },
+    {
+      "profile": "SysML",
+      "module": "gen/sysml.py",
+      "stereotypes": 56,
+      "enums": [
+        "ControlValueKind",
+        "FeatureDirectionKind",
+        "FlowDirectionKind",
+        "VerdictKind"
+      ],
+      "lines": 1411
+    }
+  ],
+  "warnings": [
+    "ControlOperator: base U.Operation is C3-incompatible; folded subset is ['U.Behavior', 'U.Operation'], keeping ['U.Behavior']",
+    "TestCase: base U.Operation is C3-incompatible; folded subset is ['U.Behavior', 'U.Operation'], keeping ['U.Behavior']"
+  ]
+}

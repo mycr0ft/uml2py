@@ -216,6 +216,8 @@ class _RefList(list):
 
 def _hook_add(container, ref, child):
     """Composite ownership + association-opposite wiring (idempotent)."""
+    if not isinstance(child, _Element):
+        return
     if ref.composite:
         child._owner = container
         child._namespace = container
@@ -238,6 +240,8 @@ def _hook_add(container, ref, child):
         child._wiring = False
 
 def _hook_remove(container, ref, child):
+    if not isinstance(child, _Element):
+        return
     if ref.composite:
         if child._owner is container: child._owner = None
         if child._namespace is container: child._namespace = None

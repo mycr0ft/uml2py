@@ -15,7 +15,7 @@
   "assoc_pairs": 180,
   "associations": 418,
   "hidden_ends": 328,
-  "generated_lines": 7836,
+  "generated_lines": 7840,
   "warnings": [
     "attr renamed Operation.class -> class_",
     "attr renamed Property.class -> class_"
