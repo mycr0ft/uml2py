@@ -221,6 +221,153 @@ for label, key, minimum in (
         ("occurrence", "part", 3)):               # occurrence def LegacyPart
     check(label, counts.get(key, 0) >= minimum, str(counts))
 
+# ---- wave 3: FullPort/ProxyPort, FlowProperty, constraints, instances -------
+W3 = U.Package(name="Wave3")
+
+ctrl = S.Block(name="Controller")
+motor_if = S.InterfaceBlock(name="MotorIf")
+full = S.FullPort(name="fullPort")
+full.type = motor_if
+ctrl.add("ownedAttribute", full)
+proxy = S.ProxyPort(name="proxyPort")
+ctrl.add("ownedAttribute", proxy)
+W3.add("packagedElement", ctrl)
+
+# FlowProperty: typed by DataType / untyped / typed by Class
+fp_out = S.FlowProperty(name="torque")
+fp_out.type = mass
+fp_out.direction = S.FlowDirectionKind.out
+ctrl.add("ownedAttribute", fp_out)
+fp_in = S.FlowProperty(name="flowIn")
+fp_in.direction = S.FlowDirectionKind.in_
+ctrl.add("ownedAttribute", fp_in)
+fp_ref = S.FlowProperty(name="flowRef")
+fp_ref.type = axle
+fp_ref.direction = S.FlowDirectionKind.inout
+ctrl.add("ownedAttribute", fp_ref)
+
+# ConstraintBlock internals: 'in attribute' params + ownedRule constraint
+adder = S.ConstraintBlock(name="Adder")
+for pname in ("a", "b", "c"):
+    pp_ = U.Property(name=pname)
+    pp_.type = mass
+    adder.add("ownedAttribute", pp_)
+sumc = U.Constraint(name="sumCheck")
+oe = U.OpaqueExpression()
+oe._vals["language"] = ["OCL2.0"]
+oe._vals["body"] = ["c == a + b"]
+sumc.specification = oe
+adder.add("ownedRule", sumc)
+W3.add("packagedElement", adder)
+
+# InstanceSpecification: part usage w/ slot values (gold example)
+b1 = S.Block(name="Block1")
+bval = U.Property(name="massValue")
+bval.type = mass
+b1.add("ownedAttribute", bval)
+inst1 = U.InstanceSpecification(name="inst1")
+inst1.classifier.append(b1)
+sl = U.Slot()
+sl.definingFeature = bval
+ls_ = U.LiteralString()
+ls_._vals["value"] = "Hello InstanceSpecification"
+sl.value.append(ls_)
+inst1.add("slot", sl)
+W3.add("packagedElement", b1)
+W3.add("packagedElement", inst1)
+
+# InstanceValue default -> feature reference (gold 'part pv : B1 = inst1;')
+holder = S.Block(name="Holder")
+pv = U.Property(name="pv")
+pv.type = b1
+iv = U.InstanceValue()
+iv.instance = inst1
+pv.defaultValue = iv
+holder.add("ownedAttribute", pv)
+W3.add("packagedElement", holder)
+
+# link InstanceSpecification -> ConnectionUsage 'connect a to b'
+b2 = S.Block(name="Block2")
+assoc_d = U.Association(name="AssocD")
+end1 = U.Property(name="e1"); end1.type = b1
+end2 = U.Property(name="e2"); end2.type = b2
+assoc_d.add("ownedEnd", end1)
+assoc_d.add("ownedEnd", end2)
+assoc_d.memberEnd = [end1, end2]
+inst2 = U.InstanceSpecification(name="inst2")
+inst2.classifier.append(b2)
+link1 = U.InstanceSpecification(name="link1")
+link1.classifier.append(assoc_d)
+sl1 = U.Slot(); sl1.definingFeature = end1
+iv1 = U.InstanceValue(); iv1.instance = inst1
+sl1.value.append(iv1)
+sl2 = U.Slot(); sl2.definingFeature = end2
+iv2 = U.InstanceValue(); iv2.instance = inst2
+sl2.value.append(iv2)
+link1.add("slot", sl1)
+link1.add("slot", sl2)
+W3.add("packagedElement", b2)
+W3.add("packagedElement", assoc_d)
+W3.add("packagedElement", inst2)
+W3.add("packagedElement", link1)
+
+# Interaction -> elision with inventory; standalone unmapped elements
+ix = U.Interaction(name="Comm")
+ll1 = U.Lifeline(name="carL")
+ll2 = U.Lifeline(name="opL")
+ix.add("lifeline", ll1)
+ix.add("lifeline", ll2)
+msg = U.Message(name="m1")
+mos1 = U.MessageOccurrenceSpecification(name="s1")
+mos1.covered = ll1
+mos2 = U.MessageOccurrenceSpecification(name="s2")
+mos2.covered = ll2
+msg.sendEvent = mos1
+msg.receiveEvent = mos2
+ix.add("message", msg)
+W3.add("packagedElement", ix)
+W3.add("packagedElement", U.StateInvariant(name="inv1"))
+W3.add("packagedElement", U.InteractionUse(name="useBase"))
+aes = U.ActionExecutionSpecification(name="exec1")
+W3.add("packagedElement", aes)
+
+text3 = M.emit_v2(W3)
+print("---- emitted SysML v2 (wave 3) ----")
+print(text3)
+print("----------------------------------")
+counts3 = M.validate_with_sysmlpy(text3)
+print("sysmlpy counts (wave 3):", counts3)
+
+check("sysmlpy parses wave 3", isinstance(counts3, dict) and len(counts3) >= 2)
+for label, needle in (
+        ("FullPort -> part usage with PortData metadata",
+         "part fullPort : MotorIf {@PortData {isFullPort = true;}}"),
+        ("PortData metadata stub emitted", "metadata def PortData"),
+        ("ProxyPort emitted with not-mapped comment",
+         "/* v1 ProxyPort has no normative mapping"),
+        ("FlowProperty out -> directed attribute",
+         "out attribute torque : Kilogram;"),
+        ("untyped FlowProperty in -> directed reference", "in flowIn;"),
+        ("FlowProperty inout -> directed ref occurrence",
+         "inout ref occurrence flowRef : Axle;"),
+        ("constraint params as 'in attribute'", "in attribute a : Kilogram;"),
+        ("ownedRule -> nested constraint w/ language",
+         'language "OCL2.0"'),
+        ("ownedRule constraint body comment", "/* c == a + b */"),
+        ("instance spec -> part usage", "part inst1 : Block1 {"),
+        ("slot -> redefines with literal",
+         'redefines massValue = "Hello InstanceSpecification";'),
+        ("InstanceValue default -> feature reference",
+         "part pv : Block1 = inst1;"),
+        ("link instance -> connection usage",
+         "connection link1 : AssocD connect inst1 to inst2;"),
+        ("Interaction elision comment", "/* v1 Interaction 'Comm' elided"),
+        ("StateInvariant elision comment", "/* v1 StateInvariant 'inv1' elided"),
+        ("ActionExecutionSpecification -> action usage", "action exec1;")):
+    check(label, needle in text3, needle)
+
+print()
+
 # ---- honesty: unmapped features refuse to guess -----------------------------
 orphan = U.Package(name="Orphan")
 orphan.add("packagedElement", U.Message(name="SomeMessage"))
@@ -239,3 +386,6 @@ if FAIL:
 out = Path(__file__).resolve().parent / "vehicle_example_v2.sysml"
 out.write_text(text + "\n")
 print(f"(wrote {out.name})")
+out3 = Path(__file__).resolve().parent / "wave3_example_v2.sysml"
+out3.write_text(text3 + "\n")
+print(f"(wrote {out3.name})")

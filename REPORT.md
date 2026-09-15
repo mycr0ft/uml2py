@@ -221,9 +221,11 @@ v2 textual notation and **parsed successfully by sysmlpy** — counts:
 satisfy counts as a requirement usage). Output kept at
 `vehicle_example_v2.sysml`.
 
-Remaining for a full transformation: ~30 initializers (mostly
-interactions/messages, FullPort/ProxyPort metadata, ItemFlow, Constraint
-internals, Slot/instance models).
+Remaining for a full transformation: activity internals (ControlFlow/
+ObjectFlow succession edges, guards, CallOperationAction,
+AcceptEventAction), opaque-expression guards on transitions,
+redefinitions/subsettings as explicit relationships, and
+interactions/message bodies (elided for grammar gaps, see Part 5).
 
 **Corpus eligibility note:** only OMG-published models are eligible as
 instance-reader test corpora (e.g. `DoDAFLibrary.xmi` from the UPDM
@@ -326,6 +328,112 @@ Output kept at `dodaf_library_v2.sysml`.
 ~/ams-gra-sim/.venv/bin/python generate_profiles.py  # profiles (lxml + gen.uml25)
 python check.py                                      # 45 checks (stdlib only)
 python check_profiles.py                             # 21 checks
-~/sysmlpy/.venv/bin/python check_v1_to_v2.py         # 16 checks (needs sysmlpy)
+~/sysmlpy/.venv/bin/python check_v1_to_v2.py         # 33 checks (needs sysmlpy)
 ~/sysmlpy/.venv/bin/python check_dodaf.py            # 32 checks (needs sysmlpy + /mnt/TBFox/DoDAFLibrary.xmi)
 ```
+
+# Part 5: v1→v2 wave 3 (FullPort/ProxyPort, FlowProperty,
+# constraint internals, Slot/instance models, interactions)
+
+Wave 3 closes the remaining implementable initializers from the Beta 4
+transformation spec (ptc/2025-04-07). All textual forms calibrated
+against sysmlpy; check_v1_to_v2.py now runs 33 checks (wave-1 model
+unchanged + a wave-3 model; output kept at `wave3_example_v2.sysml`).
+
+## FullPort and ProxyPort (7.8.7)
+
+- **FullPort → PartUsage with PortData metadata** (7.8.7.3.7 typed /
+  7.8.7.3.15 untyped; normative gold example
+  `part sysMLv1FullPort : SysMLv1Block {SysMLv1Library::PortData
+  {isFullPort = true;}}`). Emitted as
+  `part fullPort : MotorIf {@PortData {isFullPort = true;}}` with a
+  local `metadata def PortData { attribute isFullPort : Boolean; }`
+  stub standing in for SysMLv1Library (emitted once per package by
+  emit_v2 when a FullPort is present), consistent with the wave-2
+  RefineData/TraceData stubs.
+- **ProxyPort: no normative mapping** - Table 30 lists no target and
+  no mapping class exists (SYSML2_-329 flags the tables, but the
+  absence is real). The base Port mapping (PortUsage) still applies,
+  so ProxyPort emits as `port proxyPort;` followed by an explicit
+  comment naming the gap. Conjugated-port generation is itself a
+  documented spec gap (SYSML2_-199: ConjugatedPortDefinition is not
+  generated).
+
+## FlowProperty (7.8.7.3.4-.6; flagged SYSML2_-76 but specified)
+
+Direction from the stereotype tag; target always referential:
+
+| v1 form | v2 emission (calibrated) |
+|---|---|
+| typed by DataType | `out attribute torque : Kilogram;` |
+| untyped | `in flowIn;` (directed ReferenceUsage) |
+| typed by Class/Interface | `inout ref occurrence flowRef : Axle;` |
+
+## ConstraintBlock internals (7.8.5.2.1 gold)
+
+Parameters emit as directed attributes (`in attribute a : Kilogram;`)
+and the ownedRule Constraint becomes a nested ConstraintUsage with an
+opaque-expression body:
+
+```
+constraint def Adder {
+  in attribute a : Kilogram;
+  in attribute b : Kilogram;
+  in attribute c : Kilogram;
+  constraint sumCheck {
+    language "OCL2.0"
+    /* c == a + b */
+  }
+}
+```
+
+The `language "..." /* body */` form is the spec's textual rendering
+for OpaqueExpression bodies (also used in the DecisionNode and
+AcceptEventAction examples).
+
+## Slot/instance models (7.7.4.2.13-.16)
+
+- InstanceSpecification (not a link) → PartUsage typed by the
+  classifier, slots as `redefines <definingFeature> = <value>;`
+  (gold: `redefines sysMLv1ValueProperty = "Hello
+  InstanceSpecification";`). Literal values inline
+  (String/Integer/Boolean/UnlimitedNatural); unexpressable values
+  raise UnmappedFeature.
+- InstanceSpecification that is a link (classifier includes an
+  Association) → `connection link1 : AssocD connect inst1 to inst2;`
+  (7.7.4.2.13 gold; roles from the slots' values, typed by the
+  association when it has a name).
+- Property defaultValue → `= <expr>` on the usage (FeatureValue);
+  InstanceValue → feature reference (7.7.4.2.16 gold:
+  `part pv : Block1 = inst1;`).
+- InterfaceBlock-typed Property → OccurrenceUsage
+  (7.7.4.2.37 PropertyTypedByClassInterface gold:
+  `occurrence sysMLv1Property2 [0..1] : SysMLv1Interface;`).
+
+## Interactions (7.7.8) - mapped but not expressible
+
+The normative targets exist in the v2 metamodel but not in the target
+grammar reader (sysmlpy 0.91.0 has no `interaction`, `step`, or
+`invariant` keywords - verified by calibration):
+
+- Interaction → Interaction (7.7.8.3.6): **elided with an inventory**
+  naming the normative sub-mappings (Lifeline → PartUsage 7.7.8.3.13,
+  Message → Flow/ItemFlow 7.7.8.3.15).
+- CombinedFragment → Interaction (7.7.8.3.3), InteractionOperand →
+  Interaction (7.7.8.3.7), InteractionUse → Step (7.7.8.3.9),
+  StateInvariant → Invariant (7.7.8.3.17): elision comments with
+  anchors.
+- ActionExecutionSpecification/BehaviorExecutionSpecification →
+  `action <name>;` (7.7.8.3.1/.2; unnamed ones elided with a comment).
+- Table-11 not-mapped elements (MessageOccurrenceSpecification,
+  ExecutionOccurrenceSpecification, DestructionOccurrence-
+  Specification, Gate, GeneralOrdering, Continuation, ...): explicit
+  `/* v1 <Class> <name> not mapped in ptc/2025-04-07 (7.7.8.2
+  Table 11) */` comments.
+- Association member ends can be unnamed: `end : SysMLv1Block1[1];`
+  (7.7.4.2.13 gold), so emit_association now emits unnamed ends with
+  multiplicities instead of inventing names.
+
+Wave-3 sysmlpy counts: `{'metadata': 1, 'part': 6, 'constraint': 1,
+'connection': 2, 'action': 1}`. Wave-1 counts unchanged (the original
+16 checks all still pass).

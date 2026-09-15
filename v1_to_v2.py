@@ -39,7 +39,29 @@ each anchored to the published document:
   has no import), ElementImport->MembershipImport (elided, same reason),
   Dependency/Realization/Abstraction->Dependency (7.7.6.2.9 / 7.7.14.x),
   UseCase->UseCaseDefinition (7.7.13.3.3), Include->IncludeUseCaseUsage
-  (7.7.13.3.2), Comment->Comment.
+  (7.7.13.3.2), Comment->Comment,
+  FullPort->PartUsage annotated with PortData metadata (7.8.7.3.7
+  / 7.8.7.3.15; local SysMLv1Library::PortData metadata stub),
+  ProxyPort -> base Port mapping + explicit not-mapped comment
+  (Table 30 lists no target; SYSML2_-329), FlowProperty -> directed
+  Attribute/Occurrence/ReferenceUsage (7.8.7.3.4-.6, flagged SYSML2_-76
+  but specified), ConstraintBlock internals: parameters as
+  'in attribute' + ownedRule Constraint as a nested ConstraintUsage
+  w/ language/body (7.8.5.2.1), Property defaultValue ->
+  FeatureValue '= <expr>' incl. InstanceValue -> feature reference
+  (7.7.4.2.16), InstanceSpecification -> PartUsage / link
+  ConnectionUsage with slots as 'redefines p = v;' (7.7.4.2.14/.13),
+  InterfaceBlock-typed Property -> OccurrenceUsage
+  (7.7.4.2.37 PropertyTypedByClassInterface), Interaction ->
+  Interaction (7.7.8.3.6) elided (the target grammar reader has no
+  interaction element; Lifeline -> PartUsage 7.7.8.3.13, Message ->
+  Flow 7.7.8.3.15 noted in the elision), CombinedFragment ->
+  Interaction (7.7.8.3.3), InteractionOperand -> Interaction
+  (7.7.8.3.7), InteractionUse -> Step (7.7.8.3.9), StateInvariant ->
+  Invariant (7.7.8.3.17) elided for the same grammar gap,
+  ActionExecutionSpecification -> ActionUsage (7.7.8.3.1),
+  Table-11 not-mapped interaction elements as explicit comments
+  (7.7.8.2),
 
 Honesty rule: elements with no normative mapping handled here raise
 UnmappedFeature naming the v1 metaclass, rather than guessing.
@@ -137,6 +159,94 @@ def _docs_as(pad, el) -> list[str]:
     return [f"{pad}doc /* {d} */" for d in _doc_lines(el)]
 
 
+def _flow_dir(fp) -> str:
+    """FlowProperty direction tag -> 'in '/'out '/'inout ' prefix (or '').
+    The tag value is a FlowDirectionKind member (Python Enum, name 'in_'
+    for 'in') or an EnumerationLiteral or a raw string."""
+    d = fp._vals.get("direction")
+    nm = getattr(d, "name", None)
+    if isinstance(nm, str):
+        nm = nm.rstrip("_")
+    if nm in ("in", "out", "inout"):
+        return nm + " "
+    return ""
+
+
+def _value_text(v):
+    """Format a ValueSpecification as an inline v2 expression; None when
+    it has no inline textual form (caller elides honestly)."""
+    if isinstance(v, U.LiteralString):
+        b = v._vals.get("value") or v._vals.get("body") or ""
+        return '"' + str(b).replace('"', '\\"') + '"'
+    if isinstance(v, (U.LiteralInteger, U.LiteralUnlimitedNatural,
+                      U.LiteralReal, U.LiteralBoolean)):
+        x = v._vals.get("value")
+        if isinstance(v, U.LiteralBoolean):
+            return "true" if x in (True, "true", "1") else "false"
+        if x is None:
+            return None
+        return str(x.n) if isinstance(x, U.UnlimitedNatural) else str(x)
+    if isinstance(v, U.InstanceValue):      # 7.7.4.2.16 -> feature ref
+        ins = v._vals.get("instance")
+        return _name(ins)
+    return None
+
+
+def _default_suffix(prop) -> str:
+    """Property::defaultValue -> ' = <expr>' (FeatureValue; gold example:
+    'part p : T = sysMLv1InstanceSpecification;', 7.7.4.2.16)."""
+    d = prop._vals.get("defaultValue")
+    if d is None:
+        return ""
+    v = _value_text(d)
+    if v is None:
+        raise UnmappedFeature(
+            f"Property {_name(prop)!r} default of {type(d).__name__}")
+    return f" = {v}"
+
+
+def _constraint_expr(r, pad) -> list[str]:
+    """v1 Constraint owned by a ConstraintBlock -> nested ConstraintUsage
+    with language + body comment (7.8.5.2.1 gold: 'constraint
+    constraintExpression { language "OCL2.0" /* c == a + b */ }')."""
+    nm = _v2name(_name(r) or "constraintExpression")
+    spec = r._vals.get("specification")
+    inner = []
+    if isinstance(spec, U.OpaqueExpression):
+        langs = [l for l in list(spec._vals.get("language") or [])
+                 if isinstance(l, str) and l]
+        if langs:
+            inner.append(f'language "{langs[0]}"')
+        body = spec._vals.get("body")
+        body = body if isinstance(body, (list, tuple)) else [body]
+        for b in body:
+            if isinstance(b, str) and b.strip():
+                inner.append("/* " + " ".join(b.split()) + " */")
+    else:
+        b = getattr(spec, "body", None)
+        if isinstance(b, str) and b.strip():
+            inner.append("/* " + " ".join(b.split()) + " */")
+    if not inner:
+        raise UnmappedFeature(
+            f"Constraint {nm!r} without an OpaqueExpression specification")
+    out = [f"{pad}constraint {nm} {{"] + [f"{pad}  {x}" for x in inner]
+    out.append(pad + "}")
+    return out
+
+
+def _scan_fullports(pkg) -> bool:
+    """True if any Port under pkg carries the FullPort stereotype (the
+    package then needs the local SysMLv1Library::PortData stub)."""
+    for el in list(pkg.ownedMember):
+        if isinstance(el, (U.Class, U.DataType, U.Interface)):
+            for attr in list(getattr(el, "ownedAttribute", ())):
+                if isinstance(attr, U.Port) and isinstance(attr, S.FullPort):
+                    return True
+        if isinstance(el, U.Package) and _scan_fullports(el):
+            return True
+    return False
+
+
 # --------------------------------------------------------------------------
 # package / element dispatch
 # --------------------------------------------------------------------------
@@ -148,6 +258,8 @@ def emit_v2(pkg, indent=0) -> str:
     lines = [f"{pad}package {name} {{"]
     for profile, stereo, _ in getattr(pkg, "_applied_stereotypes", None) or []:
         lines.append(f"{pad}  /* v1 stereotype applied: {profile}::{stereo} */")
+    if _scan_fullports(pkg):                 # SysMLv1Library::PortData stub
+        lines.append(f"{pad}  metadata def PortData {{ attribute isFullPort : Boolean; }}")
     # v1 imports -> target grammar reader has none: honest elision comments
     for pi in list(pkg.packageImport):
         ip = pi._vals.get("importedPackage")
@@ -167,6 +279,85 @@ def emit_v2(pkg, indent=0) -> str:
 
 def _collect_verifies(pkg) -> list:
     return [el for el in list(pkg.ownedMember) if isinstance(el, S.Verify)]
+
+
+def emit_interaction(ix, pad) -> list[str]:
+    """Interaction -> Interaction (normative 7.7.8.3.6) - but the target
+    grammar reader has no interaction element, so the normative result is
+    elided with a member inventory (Lifeline -> PartUsage 7.7.8.3.13,
+    Message -> Flow 7.7.8.3.15)."""
+    ls = [m for m in list(ix.ownedMember) if isinstance(m, U.Lifeline)]
+    ms = [m for m in list(ix.ownedMember) if isinstance(m, U.Message)]
+    nm = _name(ix) or "?"
+    return [f"{pad}/* v1 Interaction {nm!r} elided: Interaction -> Interaction "
+            f"(7.7.8.3.6; {len(ls)} Lifeline -> PartUsage, {len(ms)} Message -> "
+            "Flow) but the target grammar reader has no interaction element */"]
+
+
+def emit_instancespec(ins, pad) -> list[str]:
+    """InstanceSpecification -> PartUsage (7.7.4.2.14; gold 'part inst :
+    B { redefines p = "Hello"; }') or, when a classifier is an
+    Association (a link), ConnectionUsage (7.7.4.2.13; gold 'connection
+    l : Assoc connect a to b;')."""
+    classifiers = list(ins.classifier)
+    assocs = [c for c in classifiers if isinstance(c, U.Association)]
+    nm = _v2name(_name(ins) or "?")
+    slots = list(ins.slot)
+    if assocs:
+        roles = []
+        for sl in slots:
+            for v in list(sl._vals.get("value") or []):
+                if isinstance(v, U.InstanceValue):
+                    rn = _name(v._vals.get("instance"))
+                else:
+                    rn = _value_text(v)
+                if not rn:
+                    raise UnmappedFeature(
+                        f"link InstanceSpecification {nm!r} slot value without "
+                        "a referenceable name")
+                roles.append(rn)
+        if len(roles) != 2:
+            raise UnmappedFeature(
+                f"link InstanceSpecification {nm!r} with {len(roles)} roles")
+        an = _name(assocs[0])
+        head = f"{pad}connection {nm}"
+        if an:
+            head += f" : {an}"
+        return [head + f" connect {roles[0]} to {roles[1]};"]
+    # not a link -> PartUsage, typed by the classifier(s)
+    tns = [_name(c) for c in classifiers if _name(c)]
+    typing = f" : {', '.join(tns)}" if tns else ""
+    if not slots:
+        return [f"{pad}part {nm}{typing};"]
+    out = [f"{pad}part {nm}{typing} {{"]
+    out += _slot_lines(slots, pad + "  ")
+    out.append(pad + "}")
+    return out
+
+
+def _slot_lines(slots, pad) -> list[str]:
+    """Slots -> 'redefines <definingFeature> = <value>;' (7.7.4.2.14
+    gold: 'redefines sysMLv1ValueProperty = "Hello InstanceSpecification";')."""
+    out = []
+    for sl in slots:
+        feat = sl._vals.get("definingFeature")
+        fn = _name(feat)
+        if fn is None:
+            raise UnmappedFeature("Slot without a named definingFeature")
+        values = [v for v in list(sl._vals.get("value") or [])]
+        if not values:
+            out.append(f"{pad}redefines {_v2name(fn)};")
+            continue
+        for v in values:
+            if isinstance(v, U.InstanceValue):
+                txt = _name(v._vals.get("instance"))
+            else:
+                txt = _value_text(v)
+            if txt is None:
+                raise UnmappedFeature(
+                    f"Slot {fn!r} value of {type(v).__name__}")
+            out.append(f"{pad}redefines {_v2name(fn)} = {txt};")
+    return out
 
 
 def emit_element(el, indent, verify_rels=()) -> list[str]:
@@ -215,6 +406,39 @@ def emit_element(el, indent, verify_rels=()) -> list[str]:
         return emit_usecase(el, indent)
     if isinstance(el, U.Comment):
         return _docs_as(pad, el)
+    if isinstance(el, U.InstanceSpecification):
+        return emit_instancespec(el, pad)
+    if isinstance(el, U.Interaction):
+        return emit_interaction(el, pad)
+    if isinstance(el, (U.CombinedFragment, U.InteractionOperand)):
+        anchor = "7.7.8.3.3" if isinstance(el, U.CombinedFragment) else "7.7.8.3.7"
+        return [f"{pad}/* v1 {type(el).__name__} {_name(el)!r} elided: "
+                f"mapped to v2 Interaction ({anchor}) but the target grammar "
+                "reader has no interaction element */"]
+    if isinstance(el, U.InteractionUse):
+        return [f"{pad}/* v1 InteractionUse {_name(el)!r} elided: mapped to "
+                "v2 Step (7.7.8.3.9) but the target grammar reader has no "
+                "step element */"]
+    if isinstance(el, U.StateInvariant):
+        return [f"{pad}/* v1 StateInvariant {_name(el)!r} elided: mapped to "
+                "v2 Invariant (7.7.8.3.17) but the target grammar reader has "
+                "no invariant element */"]
+    if isinstance(el, (U.ActionExecutionSpecification,
+                       U.BehaviorExecutionSpecification)):
+        # normative: -> ActionUsage (7.7.8.3.1 / 7.7.8.3.2)
+        nm = _name(el)
+        if nm is None:
+            return [f"{pad}/* v1 {type(el).__name__} elided: mapped to "
+                    "v2 ActionUsage (7.7.8.3.1/.2) but the execution "
+                    "specification is unnamed */"]
+        return [f"{pad}action {_v2name(nm)};"]
+    if isinstance(el, (U.MessageOccurrenceSpecification,
+                       U.ExecutionOccurrenceSpecification,
+                       U.DestructionOccurrenceSpecification, U.OccurrenceSpecification,
+                       U.Gate, U.GeneralOrdering, U.Continuation)):
+        # Table 11 (7.7.8.2): not mapped in ptc/2025-04-07
+        return [f"{pad}/* v1 {type(el).__name__} {_name(el)!r} not mapped "
+                "in ptc/2025-04-07 (7.7.8.2 Table 11) */"]
     if isinstance(el, U.DataType):
         return emit_datatype(el, pad)
     if isinstance(el, U.Class):
@@ -260,6 +484,9 @@ def emit_class_like(cls, indent) -> list[str]:
     body += _docs_as(pad + "  ", cls)
     for attr in list(cls.ownedAttribute):
         body += emit_property(attr, indent + 1)
+    if isinstance(cls, S.ConstraintBlock):   # normative: ownedRule ->
+        for r in list(cls.ownedRule):        # nested ConstraintUsage
+            body += _constraint_expr(r, pad + "  ")
     for op in list(cls.ownedOperation):      # normative: Operation ->
         body += emit_perform_action(op, indent + 1)   # PerformActionUsage
     for conn in list(cls.ownedConnector):    # Connector -> ConnectionUsage
@@ -345,8 +572,11 @@ def emit_association(assoc, pad) -> list[str]:
     ends = []
     for e in list(assoc.memberEnd):
         tn = _name(e._vals.get("type"))
-        en = _v2name(_name(e) or "end")
-        ends.append(f"end {en}" + (f" : {tn}" if tn else "") + ";")
+        mult = _mult(e)
+        en = _name(e)
+        end = "end" + (f" {_v2name(en)}" if en else "")
+        end += (f" : {tn}" if tn else "") + mult + ";"
+        ends.append(end)
     if isinstance(assoc, U.AssociationClass):
         nm += "  /* v1 AssociationClass */"
     if not ends:
@@ -581,8 +811,30 @@ def emit_property(prop, indent) -> list[str]:
     t = prop._vals.get("type")
     composite = prop._vals.get("aggregation") is U.AggregationKind.composite
     mult = _mult(prop)
+    dflt = _default_suffix(prop)
+    owner = getattr(prop, "owner", None)
 
     if isinstance(prop, U.Port):
+        if isinstance(prop, S.FullPort):
+            # normative: FullPort_Mapping (7.8.7.3.7, typed) /
+            # FullPortUntyped_Mapping (7.8.7.3.15) -> PartUsage with
+            # SysMLv1Library::PortData {isFullPort = true;} metadata;
+            # the stub is emitted at package level by emit_v2
+            tn = _name(t)
+            return [f"{pad}part {nm}" + (f" : {tn}" if tn else "")
+                    + " {@PortData {isFullPort = true;}}"]
+        if isinstance(prop, S.ProxyPort):
+            # base Port mapping still applies; the ProxyPort stereotype
+            # itself has no normative mapping in ptc/2025-04-07 (Table 30
+            # lists no target; SYSML2_-329)
+            if t is None:
+                return [f"{pad}port {nm};",
+                        f"{pad}/* v1 ProxyPort has no normative mapping "
+                        "(7.8.7 Table 30; SYSML2_-329) */"]
+            tn = _name(t)
+            return [f"{pad}port {nm}{mult} : {tn};",
+                    f"{pad}/* v1 ProxyPort has no normative mapping "
+                    "(Table 30; SYSML2_-329) */"]
         if t is None:                        # normative: untyped Port ->
             return [f"{pad}port {nm};"]      # PortUsage
         tn = _name(t)
@@ -591,11 +843,26 @@ def emit_property(prop, indent) -> list[str]:
         raise UnmappedFeature(f"Port {nm!r} typed by {type(t).__name__} {tn!r}")
 
     if isinstance(prop, S.FlowProperty):
-        raise UnmappedFeature("FlowProperty (flow attributes not yet emitted)")
+        # normative 7.8.7.3.4-.6 (flagged SYSML2_-76 but specified):
+        # directed usages; the target feature is always referential
+        d = _flow_dir(prop)
+        if t is None:                        # -> ReferenceUsage, referential
+            return [f"{pad}{d}{nm};"]
+        tn = _name(t)
+        if tn is None:
+            raise UnmappedFeature(f"FlowProperty {nm!r} typed by unnamed "
+                                  f"{type(t).__name__}")
+        if isinstance(t, U.DataType):        # -> AttributeUsage + direction
+            return [f"{pad}{d}attribute {nm}{mult} : {tn};"]
+        if isinstance(t, (U.Class, U.Interface)):
+            # -> OccurrenceUsage, referential
+            return [f"{pad}{d}ref occurrence {nm}{mult} : {tn};"]
+        raise UnmappedFeature(f"FlowProperty {nm!r} typed by "
+                              f"{type(t).__name__} {tn!r}")
 
     if t is None:
         # normative: "maps properties without a type" -> Feature
-        return [f"{pad}feature {nm};"]
+        return [f"{pad}feature {nm}{dflt};"]
     tn = _name(t)
     if tn is None:
         raise UnmappedFeature(f"Property {nm!r} typed by unnamed element")
@@ -603,27 +870,34 @@ def emit_property(prop, indent) -> list[str]:
         raise UnmappedFeature(f"Property {nm!r} typed by a Port")
 
     if isinstance(t, S.ConstraintBlock):     # constraint property usage
-        return [f"{pad}constraint {nm}{mult} : {tn};"]
+        return [f"{pad}constraint {nm}{mult} : {tn}{dflt};"]
     if isinstance(t, (U.Signal, U.InformationItem)):
-        return [f"{pad}item {nm}{mult} : {tn};"]
+        return [f"{pad}item {nm}{mult} : {tn}{dflt};"]
     if _is_stereo_class(t):
         if isinstance(t, S.Block):
             # normative: Property typed by block -> PartUsage; isComposite
             kind = "part" if composite else "ref part"
-            return [f"{pad}{kind} {nm}{mult} : {tn};"]
+            return [f"{pad}{kind} {nm}{mult} : {tn}{dflt};"]
         if isinstance(t, (S.ValueType, S.Requirement)):
-            return [f"{pad}attribute {nm}{mult} : {tn};"]
+            kw = "in " if isinstance(owner, S.ConstraintBlock) else ""
+            # constraint parameters are 'in attribute' (7.8.5.2.1 gold)
+            return [f"{pad}{kw}attribute {nm}{mult} : {tn}{dflt};"]
+        if isinstance(t, S.InterfaceBlock):
+            # PropertyTypedByClassInterface: InterfaceBlock is a Class
+            return [f"{pad}occurrence {nm}{mult} : {tn}{dflt};"]
         if isinstance(t, S.TestCase):
             raise UnmappedFeature(f"Property {nm!r} typed by TestCase")
         raise UnmappedFeature(f"Property {nm!r} typed by {type(t).__name__} {tn!r}")
     if isinstance(t, U.DataType):
-        return [f"{pad}attribute {nm}{mult} : {tn};"]
+        kw = "in " if isinstance(owner, S.ConstraintBlock) else ""
+        return [f"{pad}{kw}attribute {nm}{mult} : {tn}{dflt};"]
     if isinstance(t, U.Enumeration):
-        return [f"{pad}attribute {nm}{mult} : {tn};"]
+        kw = "in " if isinstance(owner, S.ConstraintBlock) else ""
+        return [f"{pad}{kw}attribute {nm}{mult} : {tn}{dflt};"]
     if isinstance(t, U.Class):               # plain class -> OccurrenceUsage
         # normative: 'occurrence p [0..1] : C;' / 'ref occurrence ...'
         kind = "occurrence" if composite else "ref occurrence"
-        return [f"{pad}{kind} {nm}{mult} : {tn};"]
+        return [f"{pad}{kind} {nm}{mult} : {tn}{dflt};"]
     raise UnmappedFeature(f"Property {nm!r} typed by {type(t).__name__} {tn!r}")
 
 
