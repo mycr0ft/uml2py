@@ -62,6 +62,27 @@ each anchored to the published document:
   ActionExecutionSpecification -> ActionUsage (7.7.8.3.1),
   Table-11 not-mapped interaction elements as explicit comments
   (7.7.8.2),
+  Activity internals: ControlFlow -> SuccessionAsUsage
+  (7.7.3.3.23 'succession n first a then b;') or TransitionUsage when
+  guarded (7.7.3.3.20; inline anonymous-calc guard form calibrated),
+  ObjectFlow -> SuccessionFlowUsage (7.7.3.3.47 'succession flow n of T
+  from x to y;'), OpaqueAction -> ActionUsage with typed pins and
+  language/body (7.7.2.3.2.2), CallOperationAction -> ActionUsage with
+  'out paramReturn = target.<op>;' (7.7.2.3.3.4), SendSignalAction ->
+  ActionUsage with 'send S to target;' (7.7.2.3.3.24; no '()' - the
+  target grammar rejects empty argument lists), AcceptEventAction ->
+  AcceptActionUsage 'accept : S;' / 'accept when {calc}.result;'
+  (7.7.2.3.1.2; only the first trigger; via-port receiver machinery
+  7.7.2.3.1.17-.19 elided), DecisionNode/MergeNode/ForkNode/JoinNode ->
+  decide/merge/fork/join (7.7.3.3.33/.46/.35/.45) with the SYSML2_-111
+  synthesized inputObject/outputObject pins, unguarded outgoing
+  decision edges as the else-condition inline calc
+  (language "SysMLv1" /* else */), edges touching InitialNode/FinalNode
+  elided (succession requires first/then; the initial/final nodes map
+  to source features and a done-subsetted feature), Property
+  subsettedProperty/redefinedProperty -> ' subsets x' / ' redefines y'
+  (7.7.4.2.36 PropertySubsetting; redefinition as a specialization),
+  Generalization -> ':>' subclassification (7.7.4.2.12),
 
 Honesty rule: elements with no normative mapping handled here raise
 UnmappedFeature naming the v1 metaclass, rather than guessing.
@@ -245,6 +266,132 @@ def _scan_fullports(pkg) -> bool:
         if isinstance(el, U.Package) and _scan_fullports(el):
             return True
     return False
+
+
+def _feature_specs(prop) -> str:
+    """Property::subsettedProperty / redefinedProperty -> ' subsets x'
+    / ' redefines y' (7.7.4.2.36 PropertySubsetting; redefinition is a
+    specialization in v2). Unnamed targets raise (nothing to reference)."""
+    bits = []
+    subs = [t for t in list(prop.subsettedProperty)]
+    if subs:
+        names = []
+        for t in subs:
+            tn = _name(t)
+            if tn is None:
+                raise UnmappedFeature(
+                    f"Property {_name(prop)!r} subsets an unnamed target")
+            names.append(_v2name(tn))
+        bits.append("subsets " + ", ".join(names))
+    reds = [t for t in list(prop.redefinedProperty)]
+    if reds:
+        names = []
+        for t in reds:
+            tn = _name(t)
+            if tn is None:
+                raise UnmappedFeature(
+                    f"Property {_name(prop)!r} redefines an unnamed target")
+            names.append(_v2name(tn))
+        bits.append("redefines " + ", ".join(names))
+    return (" " + " ".join(bits)) if bits else ""
+
+
+def _opaque_langbody(el, pad) -> list[str]:
+    """OpaqueExpression/OpaqueAction language+body ->
+    ['language "<l>" /* <body> */'] (first pair; the calibrated textual
+    rendering). Empty list when neither is present."""
+    langs = [l for l in list(el._vals.get("language") or [])
+             if isinstance(l, str) and l]
+    body = el._vals.get("body")
+    body = body if isinstance(body, (list, tuple)) else [body]
+    bodies = [b for b in body if isinstance(b, str) and b.strip()]
+    if not langs and not bodies:
+        return []
+    lang = langs[0] if langs else ""
+    text = bodies[0] if bodies else ""
+    line = f'language "{lang}"' if lang else ""
+    if text:
+        line += (" " if line else "") + "/* " + " ".join(text.split()) + " */"
+    out = [f"{pad}{line}"] if line else []
+    if len(bodies) > 1 or len(langs) > 1:
+        out.append(f"{pad}/* v1 has {max(len(bodies), len(langs))} "
+                   "language/body pairs; only the first is transformed */")
+    return out
+
+
+def _guard_expr(e) -> str:
+    """Guard Constraint on an ActivityEdge or Transition ->
+    ' if { <inline calc> }.result' (DecisionNode gold, 7.7.3.3.33),
+    ' if true'/' if false' for LiteralBoolean guards, or ''."""
+    g = e._vals.get("guard")
+    if g is None:
+        return ""
+    spec = g._vals.get("specification")
+    if isinstance(spec, U.LiteralBoolean):
+        x = spec._vals.get("value")
+        val = x in (True, "true", "1")
+        return " if true" if val else " if false"
+    if isinstance(spec, U.OpaqueExpression):
+        inner = _opaque_langbody(spec, "")
+        if not inner:
+            raise UnmappedFeature(
+                f"guard of {_name(e)!r} without language/body")
+        return (" if { return : ScalarValues::Boolean; "
+                + " ".join(inner) + " }.result")
+    raise UnmappedFeature(
+        f"guard of {_name(e)!r}: {type(spec).__name__} has no inline "
+        "v2 expression form")
+
+
+def _pin_name(pin, owner) -> str:
+    """Pin name: its own name, or a deterministic synthesis 'input<i>' /
+    'output<i>' for unnamed pins (the v1->v2 transformation creates the
+    end features; the synthesized names keep succession-flow references
+    resolvable)."""
+    nm = _name(pin)
+    if nm:
+        return nm
+    kind = "output" if isinstance(pin, U.OutputPin) else "input"
+    seq = list(owner.outputValue) if kind == "output" else list(owner.inputValue)
+    unnamed = [p for p in seq if _name(p) is None]
+    return f"{kind}{unnamed.index(pin) + 1}"
+
+
+def _pin_line(pin, kw, owner, flow_connected, pad) -> str:
+    """Action pin -> 'in/out [item] <name> [: T];' (OpaqueAction gold
+    7.7.2.3.2.2; pins touched by an ObjectFlow are item features per the
+    MergeNode gold 7.7.3.3.46)."""
+    nm = _pin_name(pin, owner)
+    item = "item " if pin in flow_connected else ""
+    tn = _name(pin._vals.get("type"))
+    if tn:
+        return f"{pad}{kw} {item}{_v2name(nm)} : {tn};"
+    return f"{pad}{kw} {item}{_v2name(nm)};"
+
+
+def _node_ref(n, edge, edges, side):
+    """Emitted reference for an activity-edge end: pins are
+    '<action>.<pin>' (7.7.3.3.47 gold 'from sysMLv1Action1.outputValue'),
+    object-flow-connected control nodes use the synthesized
+    '<node>.inputObject<i>' / '<node>.outputObject<i>', other nodes use
+    their name. None when there is nothing to reference."""
+    if isinstance(n, (U.InputPin, U.OutputPin)):
+        owner = getattr(n, "owner", None)
+        oname = _name(owner)
+        if oname is None:
+            return None
+        return f"{_v2name(oname)}.{_v2name(_pin_name(n, owner))}"
+    if isinstance(n, (U.MergeNode, U.ForkNode, U.JoinNode)):
+        nm = _name(n)
+        if nm is None:
+            return None
+        want = "target" if side == "target" else "source"
+        seq = [e2 for e2 in edges
+               if isinstance(e2, U.ObjectFlow) and e2._vals.get(want) is n]
+        obj = "inputObject" if side == "target" else "outputObject"
+        return f"{_v2name(nm)}.{obj}{seq.index(edge) + 1}"
+    nm = _name(n)
+    return _v2name(nm) if nm else None
 
 
 # --------------------------------------------------------------------------
@@ -618,17 +765,262 @@ def emit_perform_action(op, indent) -> list[str]:
 
 
 def emit_action_def(act, indent) -> list[str]:
-    """Activity / OpaqueBehavior -> ActionDefinition."""
+    """Activity / OpaqueBehavior -> ActionDefinition. Activity internals:
+    nodes -> action usages + control nodes (decide/merge/fork/join),
+    edges -> succession (ControlFlow) / succession flow (ObjectFlow)."""
     pad = "  " * indent
     nm = _name(act) or "?"
     params = _params(list(act.ownedParameter), pad)
-    if not params and not _doc_lines(act):
+    nodes = list(act.node)
+    edges = list(act.edge)
+    if not params and not _doc_lines(act) and not nodes and not edges:
         return [f"{pad}action def {nm};"]
     out = [f"{pad}action def {nm} {{"]
     out += _docs_as(pad + "  ", act)
     out += params
+    # pins touched by an ObjectFlow are item features (7.7.3.3.46 gold)
+    flow_connected = {e._vals.get("source") for e in edges
+                      if isinstance(e, U.ObjectFlow)}
+    flow_connected |= {e._vals.get("target") for e in edges
+                       if isinstance(e, U.ObjectFlow)}
+    for n in nodes:
+        out += _activity_node(n, edges, indent + 1, flow_connected)
+    for e in edges:
+        out += _activity_edge(e, edges, indent + 1)
     out.append(pad + "}")
     return out
+
+
+def _activity_node(n, edges, indent, flow_connected) -> list[str]:
+    """One activity node: OpaqueAction, CallOperationAction,
+    SendSignalAction, AcceptEventAction, DecisionNode/MergeNode/
+    ForkNode/JoinNode, or an honest elision/not-mapped comment."""
+    pad = "  " * indent
+    if isinstance(n, U.OpaqueAction):
+        return _opaque_action(n, indent, flow_connected)
+    if isinstance(n, U.CallOperationAction):
+        return _call_op_action(n, indent)
+    if isinstance(n, U.SendSignalAction):
+        return _send_signal_action(n, indent)
+    if isinstance(n, U.AcceptEventAction):
+        return _accept_action(n, indent)
+    if isinstance(n, U.DecisionNode):
+        nm = _name(n)
+        if nm is None:
+            return [f"{pad}decide;"]
+        return [f"{pad}decide {_v2name(nm)};"]
+    if isinstance(n, (U.MergeNode, U.ForkNode, U.JoinNode)):
+        kind = ("merge" if isinstance(n, U.MergeNode)
+                else "fork" if isinstance(n, U.ForkNode) else "join")
+        return _control_node(n, kind, edges, indent)
+    if isinstance(n, U.InitialNode):
+        return [f"{pad}/* v1 InitialNode {_name(n)!r} elided: it becomes "
+                "the source feature of its outgoing edges (7.7.3.3.22) "
+                "and has no standalone textual form */"]
+    if isinstance(n, U.FinalNode):
+        return [f"{pad}/* v1 {type(n).__name__} {_name(n)!r} elided: it "
+                "maps to a feature subsetted by Actions::Action::done "
+                "(7.7.3.3.24) with no standalone textual form */"]
+    if isinstance(n, U.ActivityParameterNode):
+        return []   # its parameter is already emitted as an activity parameter
+    return [f"{pad}/* v1 {type(n).__name__} {_name(n)!r} not mapped in "
+            "ptc/2025-04-07 */"]
+
+
+def _opaque_action(n, indent, flow_connected) -> list[str]:
+    """OpaqueAction -> ActionUsage with typed pins and language/body
+    (7.7.2.3.2.2 gold)."""
+    pad = "  " * indent
+    nm = _name(n)
+    if nm is None:
+        return [f"{pad}/* v1 OpaqueAction elided: mapped to v2 ActionUsage "
+                "(7.7.2.3.2.2) but it is unnamed */"]
+    ins = list(n.inputValue)
+    outs = list(n.outputValue)
+    lb = _opaque_langbody(n, pad + "  ")
+    if not ins and not outs and not lb:
+        return [f"{pad}action {_v2name(nm)};"]
+    out = [f"{pad}action {_v2name(nm)} {{"]
+    out += [_pin_line(p, "in", n, flow_connected, pad + "  ") for p in ins]
+    out += [_pin_line(p, "out", n, flow_connected, pad + "  ") for p in outs]
+    out += lb
+    out.append(pad + "}")
+    return out
+
+
+def _call_op_action(n, indent) -> list[str]:
+    """CallOperationAction -> ActionUsage calling the operation
+    (7.7.2.3.3.4 gold: 'in target : T; out paramReturn = target.<op>;')."""
+    pad = "  " * indent
+    nm = _name(n)
+    if nm is None:
+        return [f"{pad}/* v1 CallOperationAction elided: mapped to v2 "
+                "ActionUsage (7.7.2.3.3.4) but it is unnamed */"]
+    op = n._vals.get("operation")
+    target = n._vals.get("target")
+    if op is None or _name(op) is None:
+        raise UnmappedFeature(
+            f"CallOperationAction {nm!r} without a named operation")
+    if target is None:
+        raise UnmappedFeature(f"CallOperationAction {nm!r} without a target")
+    tname = _name(target._vals.get("type"))
+    if tname is None:
+        tname = _name(getattr(op, "owner", None))
+    body = []
+    for arg in list(n.argument):
+        an = _name(arg)
+        if an:
+            body.append(f"{pad}  in {_v2name(an)};")
+    body.append(f"{pad}  in target" + (f" : {tname}" if tname else "") + ";")
+    body.append(f"{pad}  out paramReturn = target.{_v2name(_name(op))};")
+    return [f"{pad}action {_v2name(nm)} {{"] + body + [pad + "}"]
+
+
+def _send_signal_action(n, indent) -> list[str]:
+    """SendSignalAction -> ActionUsage with 'send <Signal> to target;'
+    (7.7.2.3.3.24 gold 'send SysMLv1Signal() to target;' emitted without
+    '()' - the target grammar rejects empty argument lists)."""
+    pad = "  " * indent
+    nm = _name(n)
+    if nm is None:
+        return [f"{pad}/* v1 SendSignalAction elided: mapped to v2 "
+                "ActionUsage (7.7.2.3.3.24) but it is unnamed */"]
+    sig = n._vals.get("signal")
+    target = n._vals.get("target")
+    if sig is None or _name(sig) is None:
+        raise UnmappedFeature(f"SendSignalAction {nm!r} without a signal")
+    if target is None:
+        raise UnmappedFeature(f"SendSignalAction {nm!r} without a target")
+    tname = _name(target._vals.get("type"))
+    body = [f"{pad}  in target" + (f" : {tname}" if tname else "") + ";",
+            f"{pad}  send {_v2name(_name(sig))} to target;"]
+    return [f"{pad}action {_v2name(nm)} {{"] + body + [pad + "}"]
+
+
+def _accept_action(n, indent) -> list[str]:
+    """AcceptEventAction -> AcceptActionUsage (7.7.2.3.1.2): only the
+    first trigger is transformed (spec rule); SignalEvent ->
+    'accept : S;', ChangeEvent -> 'accept when {<inline calc>}.result;'.
+    The via-port receiver machinery (7.7.2.3.1.17-.19) is elided; the
+    declarative 'action a accept : S;' gold form is rejected by the
+    target grammar, so the accept clause nests in the action body."""
+    pad = "  " * indent
+    nm = _name(n)
+    if nm is None:
+        return [f"{pad}/* v1 AcceptEventAction elided: mapped to "
+                "AcceptActionUsage (7.7.2.3.1.2) but it is unnamed */"]
+    trig = list(n.trigger)
+    if not trig:
+        raise UnmappedFeature(f"AcceptEventAction {nm!r} without a trigger")
+    out = [f"{pad}action {_v2name(nm)} {{"]
+    if len(trig) > 1:
+        out.append(f"{pad}  /* v1 has {len(trig)} triggers; only the first "
+                   "is transformed (7.7.2.3.1.2) */")
+    ev = trig[0]._vals.get("event")
+    if isinstance(ev, U.SignalEvent):
+        sn = _name(ev._vals.get("signal"))
+        if sn is None:
+            raise UnmappedFeature(
+                f"AcceptEventAction {nm!r} triggered by an unnamed signal")
+        out.append(f"{pad}  accept : {_v2name(sn)};")
+    elif isinstance(ev, U.ChangeEvent):
+        spec = ev._vals.get("changeExpression")
+        inner = _opaque_langbody(spec, pad + "    ") if spec is not None else []
+        if not inner:
+            raise UnmappedFeature(
+                f"AcceptEventAction {nm!r} change trigger without an "
+                "expressable change expression")
+        out.append(f"{pad}  accept when {{")
+        out.append(f"{pad}    return : ScalarValues::Boolean;")
+        out += inner
+        out.append(f"{pad}  }}.result;")
+    else:
+        raise UnmappedFeature(
+            f"AcceptEventAction {nm!r} trigger of {type(ev).__name__} "
+            "(only SignalEvent/ChangeEvent triggers are mapped, "
+            "7.7.2.3.1.2)")
+    out.append(pad + "}")
+    return out
+
+
+def _control_node(n, kind, edges, indent) -> list[str]:
+    """MergeNode/ForkNode/JoinNode -> merge/fork/join (7.7.3.3.46/.35/
+    .45); object-flow-connected control nodes get the SYSML2_-111
+    synthesized inputObject/outputObject pins: fork out pins each equal
+    the single input, merge/join out pins combine all inputs."""
+    pad = "  " * indent
+    nm = _name(n)
+    if nm is None:
+        return [f"{pad}/* v1 {type(n).__name__} elided: mapped to a v2 "
+                f"{kind} node (7.7.3.3) but it is unnamed */"]
+    ins = [e for e in edges if isinstance(e, U.ObjectFlow)
+           and e._vals.get("target") is n]
+    outs = [e for e in edges if isinstance(e, U.ObjectFlow)
+           and e._vals.get("source") is n]
+    if not ins and not outs:
+        return [f"{pad}{kind} {_v2name(nm)};"]
+    body = [f"{pad}  in ref inputObject{i};" for i in range(1, len(ins) + 1)]
+    if isinstance(n, U.ForkNode):
+        val = "inputObject1" if ins else None
+    else:   # merge / join: combine all inputs
+        val = ("(" + ", ".join(f"inputObject{i}"
+                                for i in range(1, len(ins) + 1)) + ")"
+               if ins else None)
+    for i in range(1, len(outs) + 1):
+        if val:
+            body.append(f"{pad}  out ref outputObject{i} = {val};")
+        else:
+            body.append(f"{pad}  out ref outputObject{i};")
+    if isinstance(n, U.JoinNode) \
+            and n._vals.get("isCombineDuplicate") is False:
+        body.append(f"{pad}  /* v1 JoinNode::isCombineDuplicate = false: "
+                    "the 'nonunique' qualifier (7.7.3.3.45) is not "
+                    "accepted by the target grammar */")
+    return [f"{pad}{kind} {_v2name(nm)} {{"] + body + [pad + "}"]
+
+
+def _activity_edge(e, edges, indent) -> list[str]:
+    """ControlFlow -> 'succession <n> first <src> then <tgt>;'
+    (7.7.3.3.23) or 'succession <n> first <src> if <guard>.result then
+    <tgt>;' when guarded (7.7.3.3.20; inline anonymous-calc form);
+    unguarded outgoing decision edges carry the else-condition inline
+    calc (ExpressionElse_Mapping, language "SysMLv1"). ObjectFlow ->
+    'succession flow <n> [of T] from <src> to <tgt>;' (7.7.3.3.47)."""
+    pad = "  " * indent
+    src, tgt = e._vals.get("source"), e._vals.get("target")
+    enm = _name(e)
+    if src is None or tgt is None:
+        return [f"{pad}/* v1 {type(e).__name__} {enm!r} elided: the edge "
+                "has no source/target */"]
+    if isinstance(src, U.InitialNode):
+        return [f"{pad}/* v1 edge {enm!r} from InitialNode elided: the "
+                "initial node becomes the edge's source feature "
+                "(7.7.3.3.22) and v2 succession requires a 'first' end */"]
+    if isinstance(tgt, U.FinalNode):
+        if isinstance(e, U.ObjectFlow):
+            return [f"{pad}/* v1 ObjectFlow {enm!r} to FinalNode not "
+                    "mapped: excluded by the 7.7.3.3.47 filter */"]
+        return [f"{pad}/* v1 edge {enm!r} to FinalNode elided: the final "
+                "node maps to a feature subsetted by Actions::Action::done "
+                "(7.7.3.3.24) and v2 succession requires a 'then' end */"]
+    sref = _node_ref(src, e, edges, "source")
+    tref = _node_ref(tgt, e, edges, "target")
+    if sref is None or tref is None:
+        return [f"{pad}/* v1 {type(e).__name__} {enm!r} elided: an "
+                "endpoint has no referenceable name */"]
+    nm = _v2name(enm) if enm else ""
+    guard = _guard_expr(e)
+    if isinstance(e, U.ObjectFlow):
+        gnote = [f"{pad}/* v1 ObjectFlow guard elided */"] if guard else []
+        tn = _name(src._vals.get("type")) if isinstance(src, U.Pin) else None
+        of = f"of {_v2name(tn)} " if tn else ""
+        return gnote + [f"{pad}succession flow {nm} {of}"
+                        f"from {sref} to {tref};"]
+    if isinstance(src, U.DecisionNode) and not guard:
+        # normative: unguarded outgoing decision edge -> else condition
+        guard = (' if { return : ScalarValues::Boolean; '
+                 'language "SysMLv1" /* else */ }.result')
+    return [f"{pad}succession {nm} first {sref}{guard} then {tref};"]
 
 
 # --------------------------------------------------------------------------
@@ -692,7 +1084,8 @@ def _emit_transition(tr, indent) -> list[str]:
                 "(SYSML2_-203) */"]
     if sn is None or tn is None:
         raise UnmappedFeature(f"Transition {nm!r} without named source/target")
-    return [f"{pad}transition {nm} first {sn} then {tn};"]
+    guard = _guard_expr(tr)
+    return [f"{pad}transition {nm} first {sn}{guard} then {tn};"]
 
 
 # --------------------------------------------------------------------------
@@ -806,12 +1199,16 @@ def emit_testcase(tc, pad, verify_rels) -> list[str]:
 # --------------------------------------------------------------------------
 
 def emit_property(prop, indent) -> list[str]:
+    """Property -> AttributeUsage/PartUsage/PortUsage/ItemUsage/
+    OccurrenceUsage/Feature; subsettedProperty/redefinedProperty become
+    ' subsets x' / ' redefines y' suffixes (7.7.4.2.36)."""
     pad = "  " * indent
     nm = _name(prop) or "?"
     t = prop._vals.get("type")
     composite = prop._vals.get("aggregation") is U.AggregationKind.composite
     mult = _mult(prop)
     dflt = _default_suffix(prop)
+    specs = _feature_specs(prop)   # ' subsets x' / ' redefines y'
     owner = getattr(prop, "owner", None)
 
     if isinstance(prop, U.Port):
@@ -861,8 +1258,11 @@ def emit_property(prop, indent) -> list[str]:
                               f"{type(t).__name__} {tn!r}")
 
     if t is None:
-        # normative: "maps properties without a type" -> Feature
-        return [f"{pad}feature {nm}{dflt};"]
+        # normative: "maps properties without a type" -> Feature; the
+        # target grammar (sysmlpy 0.91.0) has no 'feature <name>;'
+        # declaration, so the bare-name feature form is emitted (a
+        # keyword-less usage declaration is a Feature in v2)
+        return [f"{pad}{nm}{specs}{dflt};"]
     tn = _name(t)
     if tn is None:
         raise UnmappedFeature(f"Property {nm!r} typed by unnamed element")
@@ -870,34 +1270,34 @@ def emit_property(prop, indent) -> list[str]:
         raise UnmappedFeature(f"Property {nm!r} typed by a Port")
 
     if isinstance(t, S.ConstraintBlock):     # constraint property usage
-        return [f"{pad}constraint {nm}{mult} : {tn}{dflt};"]
+        return [f"{pad}constraint {nm}{mult} : {tn}{specs}{dflt};"]
     if isinstance(t, (U.Signal, U.InformationItem)):
-        return [f"{pad}item {nm}{mult} : {tn}{dflt};"]
+        return [f"{pad}item {nm}{mult} : {tn}{specs}{dflt};"]
     if _is_stereo_class(t):
         if isinstance(t, S.Block):
             # normative: Property typed by block -> PartUsage; isComposite
             kind = "part" if composite else "ref part"
-            return [f"{pad}{kind} {nm}{mult} : {tn}{dflt};"]
+            return [f"{pad}{kind} {nm}{mult} : {tn}{specs}{dflt};"]
         if isinstance(t, (S.ValueType, S.Requirement)):
             kw = "in " if isinstance(owner, S.ConstraintBlock) else ""
             # constraint parameters are 'in attribute' (7.8.5.2.1 gold)
-            return [f"{pad}{kw}attribute {nm}{mult} : {tn}{dflt};"]
+            return [f"{pad}{kw}attribute {nm}{mult} : {tn}{specs}{dflt};"]
         if isinstance(t, S.InterfaceBlock):
             # PropertyTypedByClassInterface: InterfaceBlock is a Class
-            return [f"{pad}occurrence {nm}{mult} : {tn}{dflt};"]
+            return [f"{pad}occurrence {nm}{mult} : {tn}{specs}{dflt};"]
         if isinstance(t, S.TestCase):
             raise UnmappedFeature(f"Property {nm!r} typed by TestCase")
         raise UnmappedFeature(f"Property {nm!r} typed by {type(t).__name__} {tn!r}")
     if isinstance(t, U.DataType):
         kw = "in " if isinstance(owner, S.ConstraintBlock) else ""
-        return [f"{pad}{kw}attribute {nm}{mult} : {tn}{dflt};"]
+        return [f"{pad}{kw}attribute {nm}{mult} : {tn}{specs}{dflt};"]
     if isinstance(t, U.Enumeration):
         kw = "in " if isinstance(owner, S.ConstraintBlock) else ""
-        return [f"{pad}{kw}attribute {nm}{mult} : {tn}{dflt};"]
+        return [f"{pad}{kw}attribute {nm}{mult} : {tn}{specs}{dflt};"]
     if isinstance(t, U.Class):               # plain class -> OccurrenceUsage
         # normative: 'occurrence p [0..1] : C;' / 'ref occurrence ...'
         kind = "occurrence" if composite else "ref occurrence"
-        return [f"{pad}{kind} {nm}{mult} : {tn}{dflt};"]
+        return [f"{pad}{kind} {nm}{mult} : {tn}{specs}{dflt};"]
     raise UnmappedFeature(f"Property {nm!r} typed by {type(t).__name__} {tn!r}")
 
 

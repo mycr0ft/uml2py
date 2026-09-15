@@ -368,6 +368,162 @@ for label, needle in (
 
 print()
 
+# ---- wave 4: subsets/redefines, activity internals, guards -----------------
+W4 = U.Package(name="Wave4")
+
+# Property subsets / redefines (7.7.4.2.36)
+base = S.Block(name="BaseBlock")
+battr = U.Property(name="battr")
+base.add("ownedAttribute", battr)
+dattr = U.Property(name="dattr")
+dattr.type = mass
+dattr.subsettedProperty.append(battr)
+base.add("ownedAttribute", dattr)
+bpart = U.Property(name="wheels")
+bpart.type = base
+bpart.aggregation = U.AggregationKind.composite
+spare = U.Property(name="spare")
+spare.type = base
+spare.redefinedProperty.append(bpart)
+base.add("ownedAttribute", bpart)
+base.add("ownedAttribute", spare)
+W4.add("packagedElement", base)
+
+# activity internals (7.7.3.3 / 7.7.2.3)
+act4 = U.Activity(name="Proc")
+a1 = U.OpaqueAction(name="a1")
+pin_x = U.InputPin(name="x")
+a1.add("inputValue", pin_x)
+pin_res = U.OutputPin(name="result")
+pin_res.type = mass
+a1.add("outputValue", pin_res)
+a1._vals["language"] = ["OCL"]
+a1._vals["body"] = ["x = y + 1;"]
+a2 = U.OpaqueAction(name="a2")
+pin_in = U.InputPin(name="inputValue")
+a2.add("inputValue", pin_in)
+pin_spare = U.OutputPin(name="spare")
+a2.add("outputValue", pin_spare)
+a3 = U.OpaqueAction(name="a3")
+pin_sink = U.InputPin(name="sink")
+a3.add("inputValue", pin_sink)
+dn = U.DecisionNode(name="dn")
+mn = U.MergeNode(name="mn")
+for n in (a1, a2, a3, dn, mn):
+    act4.add("node", n)
+of1 = U.ObjectFlow(name="of1")
+of1.source = pin_res
+of1.target = pin_in
+of2 = U.ObjectFlow(name="of2")
+of2.source = pin_res
+of2.target = mn
+of3 = U.ObjectFlow(name="of3")
+of3.source = pin_spare
+of3.target = mn
+of4 = U.ObjectFlow(name="of4")
+of4.source = mn
+of4.target = pin_sink
+for e in (of1, of2, of3, of4):
+    act4.add("edge", e)
+cf1 = U.ControlFlow(name="cf1")
+cf1.source = a1
+cf1.target = a2
+gc = U.Constraint(name="guardCond")
+oe4 = U.OpaqueExpression()
+oe4._vals["language"] = ["OCL2.0"]
+oe4._vals["body"] = ["x > 0"]
+gc.specification = oe4
+cf1.guard = gc
+act4.add("edge", cf1)
+cf2 = U.ControlFlow(name="cf2")
+cf2.source = a1
+cf2.target = dn
+act4.add("edge", cf2)
+cf3 = U.ControlFlow(name="cf3")
+cf3.source = dn
+cf3.target = a3
+act4.add("edge", cf3)
+W4.add("packagedElement", act4)
+
+# call / send / accept
+sig4 = U.Signal(name="Sig")
+W4.add("packagedElement", sig4)
+t2 = S.Block(name="T2")
+t2.add("ownedOperation", U.Operation(name="op"))
+W4.add("packagedElement", t2)
+coa = U.CallOperationAction(name="coa")
+coa.operation = t2.ownedOperation[0]
+ctgt = U.InputPin(name="target")
+ctgt.type = t2
+coa.target = ctgt
+coa.argument.append(U.InputPin(name="paramIn"))
+act4.add("node", coa)
+ssa = U.SendSignalAction(name="ssa")
+ssa.signal = sig4
+stgt = U.InputPin(name="target")
+stgt.type = t2
+ssa.target = stgt
+act4.add("node", ssa)
+aea = U.AcceptEventAction(name="aea")
+sev = U.SignalEvent()
+sev.signal = sig4
+trig = U.Trigger()
+trig.event = sev
+aea.add("trigger", trig)
+act4.add("node", aea)
+
+# guarded state-machine transition
+sm4 = U.StateMachine(name="GuardedSM")
+reg4 = U.Region(name="r")
+s1 = U.State(name="s1")
+s2 = U.State(name="s2")
+reg4.add("subvertex", s1)
+reg4.add("subvertex", s2)
+tg1 = U.Transition(name="tg1")
+tg1.source = s1
+tg1.target = s2
+gb = U.Constraint()
+olb = U.LiteralBoolean()
+olb._vals["value"] = True
+gb.specification = olb
+tg1.guard = gb
+reg4.add("transition", tg1)
+sm4.add("region", reg4)
+W4.add("packagedElement", sm4)
+
+text4 = M.emit_v2(W4)
+print("---- emitted SysML v2 (wave 4) ----")
+print(text4)
+print("----------------------------------")
+counts4 = M.validate_with_sysmlpy(text4)
+print("sysmlpy counts (wave 4):", counts4)
+
+check("sysmlpy parses wave 4", isinstance(counts4, dict) and len(counts4) >= 2)
+for label, needle in (
+        ("subsets suffix", "attribute dattr : Kilogram subsets battr;"),
+        ("redefines suffix on part usage",
+         "ref part spare : BaseBlock redefines wheels;"),
+        ("object-flow-connected pin as item feature",
+         "out item result : Kilogram;"),
+        ("unconnected pin stays plain", "in x;"),
+        ("ObjectFlow -> succession flow of T",
+         "succession flow of1 of Kilogram from a1.result to a2.inputValue;"),
+        ("merge node with synthesized pins", "out ref outputObject1 = (inputObject1, inputObject2);"),
+        ("guarded ControlFlow inline calc",
+         'succession cf1 first a1 if { return : ScalarValues::Boolean; '
+         'language "OCL2.0" /* x > 0 */ }.result then a2;'),
+        ("decision node decide", "decide dn;"),
+        ("else-condition inline calc", 'language "SysMLv1" /* else */'),
+        ("CallOperationAction perform-by-default",
+         "out paramReturn = target.op;"),
+        ("SendSignalAction send (no empty parens)", "send Sig to target;"),
+        ("AcceptEventAction accept", "accept : Sig;"),
+        ("guarded transition with literal guard",
+         "transition tg1 first s1 if true then s2;")):
+    check(label, needle in text4, needle)
+
+print()
+
 # ---- honesty: unmapped features refuse to guess -----------------------------
 orphan = U.Package(name="Orphan")
 orphan.add("packagedElement", U.Message(name="SomeMessage"))
@@ -389,3 +545,6 @@ print(f"(wrote {out.name})")
 out3 = Path(__file__).resolve().parent / "wave3_example_v2.sysml"
 out3.write_text(text3 + "\n")
 print(f"(wrote {out3.name})")
+out4 = Path(__file__).resolve().parent / "wave4_example_v2.sysml"
+out4.write_text(text4 + "\n")
+print(f"(wrote {out4.name})")

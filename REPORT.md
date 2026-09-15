@@ -221,11 +221,11 @@ v2 textual notation and **parsed successfully by sysmlpy** — counts:
 satisfy counts as a requirement usage). Output kept at
 `vehicle_example_v2.sysml`.
 
-Remaining for a full transformation: activity internals (ControlFlow/
-ObjectFlow succession edges, guards, CallOperationAction,
-AcceptEventAction), opaque-expression guards on transitions,
-redefinitions/subsettings as explicit relationships, and
-interactions/message bodies (elided for grammar gaps, see Part 5).
+Remaining for a full transformation: interaction/message bodies
+(elided for grammar gaps, see Part 5), the accept-action via-port
+receiver machinery (7.7.2.3.1.17-.19), guarded ObjectFlows,
+JoinNode::isCombineDuplicate = false ('nonunique' qualifier is not
+accepted by the target grammar), and OpaqueBehavior bodies.
 
 **Corpus eligibility note:** only OMG-published models are eligible as
 instance-reader test corpora (e.g. `DoDAFLibrary.xmi` from the UPDM
@@ -328,7 +328,7 @@ Output kept at `dodaf_library_v2.sysml`.
 ~/ams-gra-sim/.venv/bin/python generate_profiles.py  # profiles (lxml + gen.uml25)
 python check.py                                      # 45 checks (stdlib only)
 python check_profiles.py                             # 21 checks
-~/sysmlpy/.venv/bin/python check_v1_to_v2.py         # 33 checks (needs sysmlpy)
+~/sysmlpy/.venv/bin/python check_v1_to_v2.py         # 47 checks (needs sysmlpy)
 ~/sysmlpy/.venv/bin/python check_dodaf.py            # 32 checks (needs sysmlpy + /mnt/TBFox/DoDAFLibrary.xmi)
 ```
 
@@ -437,3 +437,82 @@ grammar reader (sysmlpy 0.91.0 has no `interaction`, `step`, or
 Wave-3 sysmlpy counts: `{'metadata': 1, 'part': 6, 'constraint': 1,
 'connection': 2, 'action': 1}`. Wave-1 counts unchanged (the original
 16 checks all still pass).
+
+# Part 6: v1→v2 wave 4 (activity internals, guards,
+# subsetting/redefinition)
+
+Wave 4 implements the activity-edge and control-node mappings plus
+feature specializations. check_v1_to_v2.py now runs 47 checks; the
+wave-4 model is kept at `wave4_example_v2.sysml`.
+
+## Subsetting and redefinition (7.7.4.2.36)
+
+Property::subsettedProperty / redefinedProperty become textual
+feature-specialization suffixes (calibrated: the spec clause precedes
+the default value):
+
+- `attribute dattr : Kilogram subsets battr;`
+- `ref part spare : BaseBlock redefines wheels;` (redefinition is a
+  specialization in v2)
+
+Untyped Properties map to Feature normatively, but the target grammar
+(sysmlpy 0.91.0) has no `feature <name>;` declaration, so the bare-name
+feature form is emitted (`battr;` - a keyword-less usage declaration is
+a Feature in v2).
+
+## Activity edges
+
+| v1 form | v2 emission (calibrated) |
+|---|---|
+| ControlFlow (unguarded) | `succession cf first a1 then a2;` (7.7.3.3.23 gold) |
+| ControlFlow (guarded, opaque) | `succession cf1 first a1 if { return : ScalarValues::Boolean; language "OCL2.0" /* x > 0 */ }.result then a2;` (inline anonymous-calc guard; the spec's TransitionUsage gold nests a named calc in the target action, but the inline form of the 7.7.3.3.33 decision-node gold is equivalent and parses) |
+| ControlFlow (guarded, boolean literal) | `succession s first a1 if true then a2;` |
+| ObjectFlow (unguarded) | `succession flow of1 of Kilogram from a1.result to a2.inputValue;` (7.7.3.3.47 gold; `of T` from the source pin type, omitted when untyped) |
+| unguarded outgoing decision edge | inline calc with `language "SysMLv1" /* else */` (ExpressionElse_Mapping) |
+| edge from InitialNode / to FinalNode | elision comments (v2 succession requires `first`/`then`; the initial node maps to a source feature and the final node to a done-subsetted feature, 7.7.3.3.22/.24) |
+
+Action pins: typed pins emit `in/out <name> : T;`, pins touched by an
+ObjectFlow carry the `item` keyword per the MergeNode gold
+(`out item result : Kilogram;`), unnamed pins get deterministic
+synthesized names (`input<i>` / `output<i>`) so succession-flow
+references stay resolvable.
+
+## Control nodes (7.7.3.3.33/.35/.45/.46)
+
+- DecisionNode → `decide dn;`
+- MergeNode/ForkNode/JoinNode → `merge/fork/join <name>;`, and when
+  ObjectFlows touch them, the SYSML2_-111 synthesized pins:
+  `merge mn { in ref inputObject1; in ref inputObject2; out ref
+  outputObject1 = (inputObject1, inputObject2); }` (fork out pins each
+  equal the single input; bare `out ref outputObject1;` when there are
+  no inputs).
+
+## OpaqueAction, CallOperationAction, SendSignalAction, AcceptEventAction
+
+- OpaqueAction (7.7.2.3.2.2 gold): `action a1 { in x; out result :
+  Kilogram; language "OCL" /* x = y + 1; */ }` (only the first
+  language/body pair is transformed, with a count comment for more).
+- CallOperationAction (7.7.2.3.3.4 gold):
+  `action coa { in paramIn; in target : T2; out paramReturn =
+  target.op; }` - the call is a perform-by-default-value feature
+  reference.
+- SendSignalAction (7.7.2.3.3.24 gold `send SysMLv1Signal() to
+  target;`): emitted as `send Sig to target;` **without the empty
+  parentheses** - the target grammar rejects empty argument lists
+  (sysmlpy ArgumentList bug).
+- AcceptEventAction (7.7.2.3.1.2): only the first trigger is
+  transformed (spec rule; extra triggers get a count comment).
+  SignalEvent → `accept : Sig;`, ChangeEvent → `accept when {<inline
+  calc>}.result;`. The declarative gold form `action a accept : S via
+  p;` is rejected by the target grammar, so the accept clause nests in
+  the action body; the via-port receiver machinery (7.7.2.3.1.17-.19)
+  is elided.
+
+## Guards on state-machine transitions
+
+`transition tg1 first s1 if true then s2;` (LiteralBoolean guard) and
+the inline-calc form for opaque guards (calibrated in state
+definitions).
+
+Wave-4 sysmlpy counts: `{'part': 2, 'action': 1, 'item': 1,
+'state': 1}`. Waves 1-3 unchanged (all 33 prior checks still pass).
