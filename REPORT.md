@@ -226,6 +226,13 @@ interactions/messages, FullPort/ProxyPort metadata, ItemFlow, Constraint
 internals, Slot/instance models), multiplicity edge cases, and a real
 v1 XMI instance reader to feed the mapper instead of in-memory models.
 
+**Corpus eligibility note:** only OMG-published models are eligible as
+instance-reader test corpora (e.g. `DoDAFLibrary.xmi` from the UPDM
+example). Third-party book models shipped with commercial texts (e.g.
+the Craft-of-MBSE Enterprise Architect / Rational model) are **excluded
+on copyright grounds** - not used as inputs, test corpora, or
+reference outputs in this work.
+
 ## Reproduce
 
 ```bash
