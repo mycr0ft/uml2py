@@ -80,7 +80,8 @@ def _mult(prop) -> str:
     lv = prop._vals.get("lowerValue")
     uv = prop._vals.get("upperValue")
     if isinstance(lv, U._Element) and lv._vals.get("value") is not None:
-        lo = lv._vals.get("value")
+        v = lv._vals.get("value")
+        lo = v.n if isinstance(v, U.UnlimitedNatural) else v
     if isinstance(uv, U._Element):
         v = uv._vals.get("value")
         if isinstance(v, U.UnlimitedNatural):
@@ -143,8 +144,10 @@ def _docs_as(pad, el) -> list[str]:
 def emit_v2(pkg, indent=0) -> str:
     """Emit SysML v2 textual notation for a v1 Package (and contents)."""
     pad = "  " * indent
-    name = _name(pkg) or "Package"
+    name = _v2name(_name(pkg) or "Package")
     lines = [f"{pad}package {name} {{"]
+    for profile, stereo, _ in getattr(pkg, "_applied_stereotypes", None) or []:
+        lines.append(f"{pad}  /* v1 stereotype applied: {profile}::{stereo} */")
     # v1 imports -> target grammar reader has none: honest elision comments
     for pi in list(pkg.packageImport):
         ip = pi._vals.get("importedPackage")
@@ -227,7 +230,7 @@ def emit_element(el, indent, verify_rels=()) -> list[str]:
 def emit_class_like(cls, indent) -> list[str]:
     """Blocks (part def), plain Classes (occurrence def), etc."""
     pad = "  " * indent
-    nm = _name(cls) or "?"
+    nm = _v2name(_name(cls) or "?")
     if isinstance(cls, S.ConstraintBlock):
         head = f"{pad}constraint def {nm}"   # ConstraintBlock before Block
     elif isinstance(cls, S.Block):
@@ -287,28 +290,50 @@ def emit_usecase(uc, indent) -> list[str]:
     return body
 
 
+def _v2name(n: str) -> str:
+    """Quote names that are not valid v2 identifiers (id-derived names
+    like 'packagedElement-7' or enumeration literals like 'CTS-B')."""
+    import re
+    if n and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", n):
+        return n
+    return f"<'{n}'>"
+
+
+def _indent_of(pad: str) -> int:
+    return len(pad) // 2 if pad else 0
+
+
 def emit_datatype(el, pad) -> list[str]:
-    nm = _name(el) or "?"
+    nm = _v2name(_name(el) or "?")
+    docs = _doc_lines(el)
+    apps = getattr(el, "_applied_stereotypes", None)
     if isinstance(el, S.ValueType):
-        return [f"{pad}attribute def {nm};"]
-    if isinstance(el, S.ConstraintBlock):
-        out = [f"{pad}constraint def {nm};"]
-        # v1 ConstraintBlock owns a UML::Constraint with an OCL body;
-        # carried as a comment (v2 constraint expressions out of scope)
-        for c in list(el.ownedRule):
-            spec = getattr(c, "specification", None)
-            b = getattr(spec, "body", None) if spec is not None else None
-            if isinstance(b, str) and b:
-                out.append(f"{pad}  /* v1 OCL: {b} */")
-        return out
-    raise UnmappedFeature(f"DataType {nm!r} (no stereotype)")
+        head = f"{pad}attribute def {nm}"
+    elif isinstance(el, S.ConstraintBlock):
+        head = f"{pad}constraint def {nm}"
+    elif isinstance(el, U.DataType):
+        head = f"{pad}attribute def {nm}"
+    else:
+        raise UnmappedFeature(f"DataType {nm!r} (no stereotype)")
+    apps = apps or []
+    if not docs and not apps and not list(el.ownedAttribute):
+        return [head + ";"]
+    out = [head + " {"]
+    for d in docs:
+        out.append(f"{pad}  doc /* {d} */")
+    for profile, stereo, _ in apps:
+        out.append(f"{pad}  /* v1 stereotype applied: {profile}::{stereo} */")
+    for attr in list(el.ownedAttribute):
+        out += emit_property(attr, _indent_of(pad) + 1)
+    out.append(pad + "}")
+    return out
 
 
 def emit_enumeration(el, pad) -> list[str]:
-    nm = _name(el) or "?"
+    nm = _v2name(_name(el) or "?")
     out = [f"{pad}enum def {nm} {{"]
     for l in list(el.ownedLiteral):
-        out.append(f"{pad}  {(_name(l) or 'lit')};")
+        out.append(f"{pad}  {_v2name(_name(l) or 'lit')};")
     out.append(pad + "}")
     return out
 
@@ -316,11 +341,11 @@ def emit_enumeration(el, pad) -> list[str]:
 def emit_association(assoc, pad) -> list[str]:
     """Association/AssociationBlock -> ConnectionDefinition (normative);
     member ends become connection ends."""
-    nm = _name(assoc) or "?"
+    nm = _v2name(_name(assoc) or "?")
     ends = []
     for e in list(assoc.memberEnd):
         tn = _name(e._vals.get("type"))
-        en = _name(e) or "end"
+        en = _v2name(_name(e) or "end")
         ends.append(f"end {en}" + (f" : {tn}" if tn else "") + ";")
     if isinstance(assoc, U.AssociationClass):
         nm += "  /* v1 AssociationClass */"

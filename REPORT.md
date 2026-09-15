@@ -223,8 +223,7 @@ satisfy counts as a requirement usage). Output kept at
 
 Remaining for a full transformation: ~30 initializers (mostly
 interactions/messages, FullPort/ProxyPort metadata, ItemFlow, Constraint
-internals, Slot/instance models), multiplicity edge cases, and a real
-v1 XMI instance reader to feed the mapper instead of in-memory models.
+internals, Slot/instance models).
 
 **Corpus eligibility note:** only OMG-published models are eligible as
 instance-reader test corpora (e.g. `DoDAFLibrary.xmi` from the UPDM
@@ -233,6 +232,93 @@ the Craft-of-MBSE Enterprise Architect / Rational model) are **excluded
 on copyright grounds** - not used as inputs, test corpora, or
 reference outputs in this work.
 
+# Part 4: XMI 2.1 instance reader (real OMG-published models)
+
+With the metamodel, profiles, and emitter in place, the missing piece
+for real models was an instance reader. `xmi21.py` (clean-room, from
+the XMI 2.1 spec's published behavior plus the OMG-published example
+files themselves as corpus) reads EMF-style XMI 2.1 instance documents
+into the generated `gen.uml25` metaclasses, so the whole v1→v2 pipeline
+runs on published models unchanged.
+
+## The dialect it handles (distinct from the metamodel XMI)
+
+The UML 2.5.1 metamodel XMI (used by the generator) and EMF instance
+XMI (published models) differ in almost every convention:
+
+| Aspect | Metamodel XMI (2.5.1, UML 20160901) | Instance XMI (2.1, UML 20090901) |
+|---|---|---|
+| xmi:id / xmi:type | XML attributes in XMI namespace | same (plain attributes) |
+| scalar features | XML attributes (`name="x"`) | child elements (`<name>x</name>`) |
+| references | child elements w/ xmi:idref | same, incl. `href` cross-file |
+| namespaces | UML ns on every element | UML ns on the Model root; containment features (packagedElement, ownedAttribute, memberEnd, type, ...) are **unprefixed**; stereotype applications sit top-level in profile namespaces (`updm:Measurement`, `StandardProfileL2:ModelLibrary`) |
+| multiplicity | packed into metamodel features | `<lowerValue xmi:type="uml:LiteralUnlimitedNatural"/>` + `<upperValue><value>*</value></upperValue>` literal value-spec elements |
+| profile application | `<profileApplication><appliedProfile href/>` | both: appliedProfile href **and** top-level stereotype applications with `base_<Metaclass xmi:idref>` extension ends |
+
+## Semantics settled by evidence (documented in code)
+
+- **Empty `<lowerValue/>` = 0.** EMF serialization omits the `value`
+  attribute when it equals the feature default (0 for
+  UnlimitedNatural); RSA/EMF writers omit lower/upper elements entirely
+  for the `[1..1]` default. Observed split in the corpus: 26 properties
+  with empty lower + `*` upper (`[0..*]`), 27 with no literal elements
+  (`[1..1]`). A `[1..*]` reading is inconsistent with the corpus
+  (those are optional multi-valued properties).
+- **Cross-file type hrefs** (`<type href="...UML.xmi#String">`, 52 of
+  them in the corpus) resolve to synthetic external markers carrying
+  the original href verbatim. They are references to the OMG-published
+  PrimitiveTypes, not invented content, and are never emitted as
+  definitions - only used as types.
+- **Unresolved names** are derived from xmi:id tails and **recorded**
+  in `derived_names` (provenance, never silently invented). Bare-integer
+  tails (RSA numbering) join with the feature segment:
+  `...packagedElement-7` → `packagedElement-7`; the unnamed ownedEnd →
+  `ownedEnd`. Non-identifier names are emitted quoted: `<'packagedElement-7'>`, `<'DoDAF Class Library'>`, `<'CTS-B'>`.
+- **Stereotype applications are collected, not folded**: 61
+  applications in the corpus (53 `updm:Measurement` on properties,
+  7 `updm:MeasurementSet` on DataTypes, 1
+  `StandardProfileL2:ModelLibrary` on the model). They are attached to
+  the base elements as `_applied_stereotypes` and carried into the v2
+  output as explicit `/* v1 stereotype applied: ... */` comments, since
+  UPDM is not SysML v1 and has no normative v2 mapping.
+- **UnmappedFeature honesty** carries over: unknown tags/features are
+  recorded (`unmapped`, `unmapped_features`), never guessed. The corpus
+  exercises none (163 objects, 0 unmapped).
+
+## End-to-end result (check_dodaf.py, 32 checks)
+
+DoDAFLibrary.xmi (OMG UPDM example; 68,999 bytes) → reader →
+`gen.uml25` Model → `emit_v2` → **sysmlpy-parsed v2**:
+
+```
+package <'DoDAF Class Library'> {
+  /* v1 stereotype applied: StandardProfileL2::ModelLibrary */
+  attribute def SecurityAttributes {
+    doc /* W3C XML Schema for the Intelligence Community Metadata ... */
+    /* v1 stereotype applied: updm::MeasurementSet */
+    attribute classification : ClassificationType;
+    attribute dateOfExemptedSource : String;
+    attribute ownerProducer[*] : String;
+    ...
+  }
+  ...
+  enum def ClassificationType { C; CTS; <'CTS-B'>; ... }
+  connection def <'packagedElement-7'> {
+    end ownedEnd : SecurityAttributes;
+    end classification : ClassificationType;
+  }
+}
+```
+
+Verified: 163 objects; 7 DataTypes + 1 Enumeration (17 literals) +
+1 Association; 53 classifier-owned properties + 1 association-owned
+end; 52 external String hrefs + 2 internal idrefs; 30 comments with
+bodies; 26 `[0..*]` + 27 default `[1..1]` multiplicities; memberEnd =
+[unnamed ownedEnd, SecurityAttributes-classification] with back-refs
+resolved. sysmlpy counts: `{'attribute': 7, 'enumeration': 1,
+'connection': 1}` — the external String never becomes a definition.
+Output kept at `dodaf_library_v2.sysml`.
+
 ## Reproduce
 
 ```bash
@@ -240,5 +326,6 @@ reference outputs in this work.
 ~/ams-gra-sim/.venv/bin/python generate_profiles.py  # profiles (lxml + gen.uml25)
 python check.py                                      # 45 checks (stdlib only)
 python check_profiles.py                             # 21 checks
-~/sysmlpy/.venv/bin/python check_v1_to_v2.py         # 6 checks (needs sysmlpy)
+~/sysmlpy/.venv/bin/python check_v1_to_v2.py         # 16 checks (needs sysmlpy)
+~/sysmlpy/.venv/bin/python check_dodaf.py            # 32 checks (needs sysmlpy + /mnt/TBFox/DoDAFLibrary.xmi)
 ```
