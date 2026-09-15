@@ -1,0 +1,23 @@
+{
+  "source": "/mnt/TBFox/surfacebackup_512GB/uml_xmi/UML.xmi",
+  "classes": 242,
+  "attributes": 622,
+  "operations": 205,
+  "enums": 13,
+  "constraints": 449,
+  "abstract": 49,
+  "multi_inheritance": 34,
+  "union_attrs": 22,
+  "derived_attrs": 73,
+  "composite": 213,
+  "subset_refs": 393,
+  "redefine_refs": 40,
+  "assoc_pairs": 180,
+  "associations": 418,
+  "hidden_ends": 328,
+  "generated_lines": 7836,
+  "warnings": [
+    "attr renamed Operation.class -> class_",
+    "attr renamed Property.class -> class_"
+  ]
+}
