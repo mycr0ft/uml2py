@@ -18,6 +18,34 @@
         "VerdictKind"
       ],
       "lines": 1464
+    },
+    {
+      "profile": "UAF",
+      "module": "gen/uaf.py",
+      "stereotypes": 256,
+      "enums": [
+        "ActualMeasurementKind",
+        "ActualMilestoneKind",
+        "CapabilityKind",
+        "ChallengeKind",
+        "DriverKind",
+        "EnvironmentKind",
+        "GeoPoliticalExtentTypeKind",
+        "InformationKind",
+        "InformationModelKind",
+        "LocationKind",
+        "LocationTypeKind",
+        "OperationalExchangeKind",
+        "ProjectKind",
+        "ResourceExchangeKind",
+        "ResponsibleRoleKind",
+        "RoleKind",
+        "RuleKind",
+        "ServiceExchangeKind",
+        "ValueItemKind",
+        "WholeLifeConfigurationKind"
+      ],
+      "lines": 3750
     }
   ],
   "warnings": [

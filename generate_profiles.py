@@ -30,6 +30,7 @@ from gen import uml25 as U  # noqa: E402
 PROFILES = [
     Path("/mnt/TBFox/surfacebackup_512GB/uml_xmi/StandardProfile.xmi"),
     Path("/mnt/TBFox/surfacebackup_512GB/uml_xmi/sysml.xmi"),
+    Path("/mnt/TBFox/uml_xmi/UAF.xmi"),   # OMG UAF 1.2 UAFML profile
 ]
 
 PRIMITIVES = {"Boolean": "bool", "Integer": "int", "Real": "float",
@@ -88,8 +89,10 @@ class MStereo:
     def __init__(self, name, profile, pkg):
         self.name, self.profile, self.pkg = name, profile, pkg
         self.abstract = False
-        self.bases = []          # stereotype names
+        self.bases = []          # stereotype names (same profile)
         self.bases_meta = []     # metaclass names from base_* ends (ordered)
+        self.bases_ext = []      # (profile, stereotype) href generalizations
+        self.gen_refs = []       # raw generalization refs (ids or name paths)
         self.tags = []           # (name, type_expr, flags...)
         self.constraints = []
         self.comment = None
@@ -121,6 +124,62 @@ def type_of(el):
     return None, None
 
 
+def resolve_prop_type(el, idmap):
+    """(tname, kind) for a stereotype attribute, dialect-aware.
+
+    kind: 'prim' | 'enum' | 'stereo' (same-profile stereotype) |
+    'extstereo' (SysML stereotype via href) | None (name-dispatch fallback
+    with the type_of() semantics).  Extends type_of() with the xmi:id /
+    href dialects the UAF 1.2 UAFML serialization uses: type attributes
+    carrying xmi:id refs into the same document, hrefs into SysML.xmi, and
+    UUID-referenced EnumerationLiteral defaults.
+    """
+    t = el.get("type")
+    if t:
+        if t in PRIMITIVES:
+            return t, "prim"
+        target = idmap.get(t)
+        if target is not None:
+            tx = xt(target) or etree.QName(target).localname
+            if tx == "uml:Enumeration":
+                return target.get("name"), "enum"
+            if tx == "uml:Stereotype":
+                return target.get("name"), "stereo"
+        if "." in t:                       # dotted name-path (sysml dialect)
+            return t.split(".")[-1], None
+        return t, None
+    ty = el.find("{*}type")
+    if ty is not None and ty.get("href"):
+        href = ty.get("href")
+        base = href.split("#")[0].rsplit("/", 1)[-1]
+        frag = href.split("#")[-1]
+        if "PrimitiveTypes" in base:
+            return frag, "prim"
+        if "UML" in base:
+            return frag, "meta"
+        if "SysML" in base:
+            if "Libraries" in frag:       # SysML library primitive, e.g. String
+                mm = re.search(r"-([A-Za-z]+)_PackageableElement$", frag)
+                return (mm.group(1) if mm else frag), "prim"
+            if "." in frag:               # e.g. #SysML.Block
+                return frag.split(".", 1)[1], "extstereo"
+            return frag, "extstereo"
+        return frag, "meta"
+    dv = el.find("{*}defaultValue")
+    if dv is not None:
+        iv = dv.find("{*}instance")
+        if iv is not None:
+            ref = idref(iv) or ""
+            if "." in ref:                # dotted name-path default
+                return ref.split(".")[-2], "enum"
+            lit = idmap.get(ref)          # UUID-referenced literal (UAF)
+            if lit is not None:
+                owner = lit.getparent()
+                if owner is not None and etree.QName(owner).localname == "Enumeration":
+                    return owner.get("name"), "enum"
+    return None, None
+
+
 def lower_of(el):
     lv = el.find("{*}lowerValue")
     return int(lv.get("value", 0)) if lv is not None else 0
@@ -130,6 +189,8 @@ def parse_profile(path):
     r = etree.parse(str(path)).getroot()
     prof = next(e for e in r.iter() if ln(e) == "Profile")
     profile = prof.get("name")
+    xid_key = "{http://www.omg.org/spec/XMI/20131001}id"
+    idmap = {el.get(xid_key): el for el in r.iter() if el.get(xid_key)}
     warns = []
     stereotypes, exts, enums = {}, {}, {}
 
@@ -149,8 +210,13 @@ def parse_profile(path):
                             gel = g.find("{*}general")
                             if gel is not None:
                                 b = idref(gel)
+                                if b is None and gel.get("href"):
+                                    frag = gel.get("href").split("#")[-1]
+                                    if "." in frag:      # e.g. SysML.Block
+                                        s.bases_ext.append(tuple(frag.split(".", 1)))
+                                        continue
                         if b:
-                            s.bases.append(b.split(".")[-1])   # strip 'SysML.' prefix
+                            s.gen_refs.append(b)
                     for cr in kid.findall("{*}ownedRule"):
                         spec = cr.find("{*}specification")
                         body = None
@@ -165,7 +231,8 @@ def parse_profile(path):
                         aname = a.get("name")
                         if aname and aname.startswith("base_"):
                             meta = aname[len("base_"):]
-                            s.bases_meta.append(meta)
+                            if meta not in s.bases_meta:   # UAF.xmi repeats base_Element
+                                s.bases_meta.append(meta)
                         else:
                             lo = lower_of(a)
                             upv = a.find("{*}upperValue")
@@ -174,9 +241,9 @@ def parse_profile(path):
                             derived = a.get("isDerived") == "true"
                             union = a.get("isDerivedUnion") == "true"
                             cmt = first_comment(a)
-                            _, tname = type_of(a)
+                            tname, tk = resolve_prop_type(a, idmap)
                             s.tags.append((safe_name(aname), tname, multi,
-                                           lo, up, derived, union, cmt))
+                                           lo, up, derived, union, cmt, tk))
                     stereotypes[s.name] = s
                 elif kxt == "uml:Extension":
                     owned = kid.findall("{*}ownedEnd")
@@ -193,19 +260,51 @@ def parse_profile(path):
                     else:
                         meta = name.rsplit("_", 1)[0] if "_" in name else None
                     if meta is None:
+                        # nameless extensions (UAF 1.2): metaclass from the
+                        # memberEnd property whose name carries base_<Meta>;
+                        # ExtensionEnd::lower defaults to 1 per UML 2.5.1,
+                        # so a bare (value-attr-less) lowerValue means a
+                        # REQUIRED extension (ordinary EMF properties
+                        # default lower to 0 -- DoDAF dialect lesson)
+                        ee_id = xid(ee)
+                        meta_id = next((idref(x) for x in kid.findall("{*}memberEnd")
+                                        if idref(x) != ee_id), None)
+                        prop = idmap.get(meta_id) if meta_id else None
+                        pname = prop.get("name") if prop is not None else None
+                        meta = (pname[len("base_"):] if pname and pname.startswith("base_")
+                                else None)
+                        lv = ee.find("{*}lowerValue")
+                        req = int(lv.get("value", "1")) == 1 if lv is not None else True
+                        if prop is not None:
+                            par = prop.getparent()
+                            if par is not None and xt(par) == "uml:Stereotype":
+                                st_name = par.get("name")
+                    if meta is None:
                         warns.append(f"extension {name}: no metaclass in name")
                         continue
-                    exts.setdefault(st_name, []).append((meta, req))
+                    exts.setdefault(st_name, [])
+                    if (meta, req) not in exts[st_name]:   # UAF.xmi repeats extensions
+                        exts[st_name].append((meta, req))
                 elif kxt == "uml:Enumeration":
                     lits = [(safe_name(l.get("name")), l.get("name"))
                             for l in kid.findall("{*}ownedLiteral")]
                     enums[kid.get("name")] = lits
 
-    walk(prof, "SysML" if profile == "SysML" else "StandardProfile")
+    walk(prof, profile)
 
-    # resolve base metaclasses: prefer extension table, fall back to base_ names
+    # resolve raw generalization refs: sysml.xmi uses dotted name paths,
+    # UAF.xmi uses xmi:id refs into the same document (256 unique names)
     for s in stereotypes.values():
-        pass
+        for ref in s.gen_refs:
+            if "." in ref:
+                s.bases.append(ref.split(".")[-1])
+                continue
+            gel = idmap.get(ref)
+            if gel is not None and xt(gel) == "uml:Stereotype":
+                if gel.get("name") not in s.bases:   # UAF.xmi repeats generalizations
+                    s.bases.append(gel.get("name"))
+            else:
+                warns.append(f"{s.name}: generalization target {ref!r} unresolved")
 
     # stereotype generalization validation
     for s in stereotypes.values():
@@ -218,14 +317,20 @@ def parse_profile(path):
 
 
 def gen_tag(t, metaclasses, local_enums):
-    name, tname, multi, lo, up, derived, union, cmt = t
-    if tname == "UnlimitedNatural":
+    name, tname, multi, lo, up, derived, union, cmt, tk = t
+    if tk in ("stereo", "extstereo"):
+        # stereotype-typed tagged values are late-bound by name: the target
+        # stereotype may be defined later in the module (topological order
+        # only covers inheritance) or in gen.sysml; _Ref stores its type as
+        # opaque metadata, so a string reference is safe
+        expr = f"'sysml.{tname}'" if tk == "extstereo" else f"'{tname}'"
+    elif tname == "UnlimitedNatural":
         expr = "U.UnlimitedNatural"
-    elif tname in PRIMITIVES:
+    elif tk == "prim" or (tk is None and tname in PRIMITIVES):
         expr = PRIMITIVES[tname]
-    elif tname in local_enums:
+    elif tk == "enum" or (tk is None and tname in local_enums):
         expr = tname
-    elif tname in metaclasses:
+    elif tk == "meta" or (tk is None and tname in metaclasses):
         expr = f"U.{tname}"
     else:
         expr = "None"
@@ -249,15 +354,19 @@ def gen_tag(t, metaclasses, local_enums):
 def emit_module(d, metaclasses, warns):
     """Emit one profile as its own module (avoids cross-profile shadowing)."""
     st = d["stereotypes"]
-    mod_name = {"StandardProfile": "standard_profile", "SysML": "sysml"}[d["profile"]]
+    mod_name = {"StandardProfile": "standard_profile", "SysML": "sysml",
+                "UAF": "uaf"}[d["profile"]]
+    import gen.sysml as _sysml
     from itertools import permutations
     created = {}
 
     def verify_mro(name, base_names, base_objs):
         if not base_names:
             return None
-        orders = [base_names] + [list(p) for p in permutations(base_names)
-                                 if list(p) != base_names]
+        orders = [base_names]
+        if len(base_names) <= 6:   # cap factorial blowup (UAF folds up to 10+ bases)
+            orders += [list(p) for p in permutations(base_names)
+                       if list(p) != base_names]
         obj_by_name = dict(zip(base_names, base_objs))
         for order in orders:
             try:
@@ -290,6 +399,10 @@ def emit_module(d, metaclasses, warns):
         for b in s.bases:
             if b in st:
                 best = max(best, sdepth(st[b]) + 1)
+        for p, b in s.bases_ext:
+            cls = getattr(_sysml, b, None)
+            if cls is not None:
+                best = max(best, len(cls.__mro__))
         for b in s.bases_meta:
             best = max(best, meta_depth.get(b, 0))
         depth[s.name] = best
@@ -328,6 +441,10 @@ def emit_module(d, metaclasses, warns):
     w("import enum as _enum")
     w("")
     w("from gen import uml25 as U")
+    uses_sysml = any(s.bases_ext for s in st.values()) or any(
+        t[8] == "extstereo" for s in st.values() for t in s.tags)
+    if uses_sysml:
+        w("import gen.sysml as sysml")
     w("from gen.uml25 import _Ref  # noqa: F401")
     w("")
     for ename, lits in sorted(d["enums"].items()):
@@ -348,6 +465,12 @@ def emit_module(d, metaclasses, warns):
                 cand.append((depth[b] + 1, b, created[b]))
             elif b not in s.bases_meta:
                 warns.append(f"{s.name}: base {b!r} unresolved, dropped")
+        for p, b in s.bases_ext:
+            cls = getattr(_sysml, b, None)
+            if cls is None:
+                warns.append(f"{s.name}: cross-profile base {p}.{b} unresolved")
+                continue
+            cand.append((len(cls.__mro__), f"sysml.{b}", cls))
         cand.sort(key=lambda x: -x[0])
         names = [n for _, n, _ in cand]
         objs = [c for _, _, c in cand]
@@ -360,6 +483,7 @@ def emit_module(d, metaclasses, warns):
         created[s.name] = type(
             safe_name(s.name),
             tuple((getattr(U, b[2:]) if b.startswith("U.")
+                   else getattr(_sysml, b.split(".")[-1]) if b.startswith("sysml.")
                    else (created[b] if b in created else getattr(U, b)))
                   for b in bases),
             {})

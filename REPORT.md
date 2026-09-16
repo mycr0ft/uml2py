@@ -516,3 +516,79 @@ definitions).
 
 Wave-4 sysmlpy counts: `{'part': 2, 'action': 1, 'item': 1,
 'state': 1}`. Waves 1-3 unchanged (all 33 prior checks still pass).
+---
+
+# Part 7: UAF 1.2 profile (gen/uaf.py) - third OMG profile corpus
+
+User request: "find the UAF.xmi files and get these parsed as well". The
+OMG UAF 1.2 page publishes `UAF.xmi` (UAFML profile, 20211201) and
+`MeasurementsLibrary.xmi` (instance model) at
+`https://www.omg.org/spec/UAF/20211201/` - both downloaded to
+`/mnt/TBFox/uml_xmi/` (OMG-published, hence corpus-eligible under the
+same rule as DoDAFLibrary.xmi).
+
+## What the UAF 1.2 XMI contains
+
+1,024,601 bytes of XMI 2.1/EMF serialization (same dialect family as
+sysml.xmi, produced by the UAF tooling): 256 stereotypes, 253
+Extensions, 414 properties, 259 OCL constraints, 379 generalizations,
+58 associations, 20 enumerations, 114 packages under 12 viewpoint
+packages (Operational, Strategic, Resources, Services, Security, ...).
+
+## Dialect deltas vs sysml.xmi (handled in generate_profiles.py)
+
+- **UUID idrefs everywhere**: generalization `general` attributes and
+  property `type` attributes carry xmi:ids, not dotted name paths.
+  `parse_profile` now builds an id->element map and resolves refs
+  against it (256 unique stereotype names - verified).
+- **Nameless Extensions**: no name attribute; the metaclass comes from
+  the memberEnd property (`base_<Meta>`), the owning stereotype from
+  the property's owner (fallback: `extension_<S>` end name).
+- **ExtensionEnd::lower defaults to 1** (UML 2.5.1), so the 248
+  value-attr-less lowerValues + 5 missing lowerValues all mean
+  REQUIRED extensions (unlike ordinary EMF properties where an empty
+  lowerValue means 0 - the DoDAF lesson, now generalized).
+- **Cross-profile generalizations**: 49 href generalizations into
+  SysML.xmi (#SysML.Block x14, #SysML.Allocate x17, ProxyPort,
+  InterfaceBlock, ValueType, Requirement, Trace, Refine,
+  DeriveReqt, ItemFlow, View, Viewpoint). The emitter folds them as
+  Python bases from `gen.sysml` (e.g. `Capability(sysml.Block,
+  U.Class, PropertySet, ...)`, `View(sysml.View, ...)`) with the
+  emitted module importing `gen.sysml` when needed.
+- **Stereotype-typed tagged values**: 104 properties typed by
+  stereotype xmi:id refs. Since `_Ref` stores its type as opaque
+  metadata, these are late-bound as string references (`'Resource'`,
+  `'sysml.Block'`) - topological order only covers inheritance, so a
+  forward class reference would be unsafe; strings are checked to
+  resolve against gen.uaf/gen.sysml.
+- **SysML library types**: 4 tagged values typed through
+  `_SysML_Libraries_...-String_PackageableElement` hrefs map to `str`.
+- **Duplicate serializations**: UAF.xmi repeats `base_Element` on
+  UAFElement, repeats a Resource generalization on
+  ServiceExchangeItem, and repeats the UAFElement Extension pair -
+  all deduped at parse time (with a comment).
+- **C3 permutation blowup**: UAF stereotypes fold up to 10+ bases;
+  the exhaustive permutation search is capped at 6 bases, then the
+  greedy C3 insertion fallback takes over.
+
+## Result
+
+- `gen/uaf.py`: 3,750 lines, 256 stereotype classes, 112 tagged
+  values, 259 constraints, 20 enums, 252 extension entries.
+- `check_profiles.py` extended 21 -> 40 checks (all green): counts,
+  abstract flagging (44), cross-profile folds, constraint text,
+  extension table, late-bound tags, enum literals, no shadowing.
+- Regression: `gen/standard_profile.py` and `gen/sysml.py` are
+  byte-identical to the previous commit.
+- Suite totals: check.py 45, check_profiles.py 40,
+  check_v1_to_v2.py 47, check_dodaf.py 32 = **164 checks**.
+
+## Still open (honest)
+
+- `MeasurementsLibrary.xmi` (74 KB UML model + UAF stereotype
+  applications) is downloaded and queued as the next instance-reader
+  corpus (check_dodaf-style suite) - reader dialect work pending.
+- BPMN: OMG does not publish a UML-profile XMI for BPMN; the
+  metamodel ships as CMOF XMI (BPMN20.cmof + DI/DC/BPMNDI.cmof,
+  20100501) - a separate MOF/CMOF generator would be needed
+  (`generate_bpmn.py`), tracked as future work.

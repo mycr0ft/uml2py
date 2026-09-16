@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Checks for the generated profile modules (StandardProfile + SysML v1)."""
+"""Checks for the generated profile modules (StandardProfile + SysML v1 + UAF 1.2)."""
 import sys
 from pathlib import Path
 
@@ -7,6 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import gen.uml25 as U  # noqa: E402
 import gen.standard_profile as SP  # noqa: E402
 import gen.sysml as S  # noqa: E402
+import gen.uaf as F  # noqa: E402
 
 PASS, FAIL = [], []
 
@@ -71,6 +72,61 @@ print("== StandardProfile ==")
 check("Derive extends Abstraction", issubclass(SP.Derive, U.Abstraction))
 check("Document specializes File", issubclass(SP.Document, SP.File))
 check("Metaclass extends Class", issubclass(SP.Metaclass, U.Class))
+
+print("== UAF 1.2 (UAFML, from OMG UAF.xmi) ==")
+check("256 UAF stereotypes", len(F._STEREOTYPES) == 256)
+check("20 UAF enumerations",
+      sum(1 for n in dir(F) if isinstance(getattr(F, n), type)
+          and issubclass(getattr(F, n), __import__("enum").Enum)) == 20)
+check("UAFElement abstract, folds U.Element",
+      F.UAFElement._ABSTRACT and issubclass(F.UAFElement, U.Element)
+      and F.UAFElement._BASE_METACLASSES == ("Element",))
+check("duplicate base_Element serialization deduped",
+      F._EXTENSIONS["UAFElement"] == (("Element", True),))
+check("Capability folds sysml.Block (cross-profile generalization)",
+      issubclass(F.Capability, S.Block) and issubclass(F.Capability, U.Class))
+check("View folds sysml.View (href generalization)",
+      S.View in F.View.__mro__)
+check("OperationalAgent folds 4 stereotype bases + U.Class, abstract",
+      F.OperationalAgent._ABSTRACT
+      and all(any(k.__name__ == n for k in F.OperationalAgent.__mro__)
+              for n in ("OperationalAsset", "SubjectOfOperationalConstraint",
+                        "CapableElement", "Desirer"))
+      and issubclass(F.OperationalAgent, U.Class))
+n_cons = sum(len(c.CONSTRAINTS) for c in F._STEREOTYPES
+             if "CONSTRAINTS" in c.__dict__)
+check("259 UAF OCL constraints carried", n_cons == 259, f"{n_cons}")
+check("44 abstract stereotypes flagged",
+      sum(1 for c in F._STEREOTYPES if c._ABSTRACT) == 44)
+check("all _STEREO labels are UAF-qualified",
+      all(c._STEREO.startswith("UAF::") for c in F._STEREOTYPES))
+check("252 extension entries after dedup", len(F._EXTENSIONS) == 252)
+check("extension metaclasses are required (ExtensionEnd::lower defaults 1)",
+      all(req for metas in F._EXTENSIONS.values() for _, req in metas))
+check("stereotype-typed tag late-bound by name",
+      F.Measurement._DECL["environmentalContext"].t == "ActualCondition")
+str_typed = [r.t for c in F._STEREOTYPES
+             for r in c.__dict__.get("_DECL", {}).values()
+             if isinstance(r.t, str)]
+check("55 stereotype-typed tags, all resolving to uaf/sysml classes",
+      len(str_typed) == 55
+      and all((t.startswith("sysml.") and hasattr(S, t[6:])) or hasattr(F, t)
+              for t in str_typed), f"{len(str_typed)}")
+check("Capability.kind driven by local enum",
+      F.Capability._DECL["kind"].t is F.CapabilityKind
+      and F.Capability().kind is None)
+check("OperationalExchangeKind literals carried",
+      [l.value for l in F.OperationalExchangeKind][:2]
+      == ["MaterielExchange", "OrganizationalExchange"])
+check("no cross-profile shadowing (Viewpoint distinct)",
+      F.Viewpoint is not S.Viewpoint
+      and F.Viewpoint._STEREO.startswith("UAF"))
+check("Viewpoint instantiable with tag roundtrip",
+      (vp := F.Viewpoint()) is not None
+      and issubclass(F.Viewpoint, U.Class))
+check("generator produced no unresolved targets",
+      not any("unresolved" in w for w in
+              __import__("json").load(open("profile_stats.json"))["warnings"]))
 
 print("== profile constraints carried ==")
 n_cons = sum(len(c.CONSTRAINTS) for c in S._STEREOTYPES
