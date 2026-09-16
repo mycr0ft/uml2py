@@ -592,3 +592,63 @@ packages (Operational, Strategic, Resources, Services, Security, ...).
   metamodel ships as CMOF XMI (BPMN20.cmof + DI/DC/BPMNDI.cmof,
   20100501) - a separate MOF/CMOF generator would be needed
   (`generate_bpmn.py`), tracked as future work.
+
+---
+
+# Part 8: BPMN 2.0.2 via CMOF XMI (gen/bpmn.py) - the "XMI representation" answer
+
+User follow-up: "Maybe BPMN's xmi representation?" Finding: OMG does NOT
+publish BPMN as a UML-profile XMI. BPMN 2.0's canonical serialization
+is the XSD-based `.bpmn` XML exchange format, and the OMG page publishes
+the **metamodel as CMOF** (MOF 2.0 XMI): `BPMN20.cmof` (189,597 bytes,
+20100501) plus `DC/DI/BPMNDI.cmof`. The CMOF is BPMN's XMI
+representation - downloaded to `/mnt/TBFox/uml_xmi/`.
+
+## CMOF dialect (new generator `generate_bpmn.py`)
+
+- root `cmof:Package` "BPMN20" (uri .../MODEL-XMI), 339 ownedMember:
+  137 classes, 193 associations, 9 enumerations (28 literals);
+- **generalization by `superClass` attributes** (space-separated;
+  e.g. `Task superClass="Activity InteractionNode"`) - C3-verified
+  Python bases with the greedy fallback;
+- **multiplicity on the class-side attribute**: 216 attrs default
+  1..1, 99 carry upper='*' (absent lower -> 0; all are 0..* in the
+  normative prose), 96 composite, 10 derived, 27 literal defaults
+  carried as comments;
+- **associations as memberEnd name-pairs** ("Class-endName" /
+  "AssocId-endName"): class-owned ends wire `opp` both directions;
+  association-owned ends synthesize back-refs onto the partner class
+  (the uml25 hidden-end closure pattern); both-ends-class-owned
+  serializations just wire opposites (17 such, no warnings);
+- primitives by href (`cmof.xml#String/Boolean/Integer` -> str/bool/
+  int), MOF DOM Element (8 refs, late-bound `'xml.dom.Element'`),
+  one external `BPMNDI.cmof#BPMNDiagram` ref kept package-qualified
+  (`'BPMNDI.BPMNDiagram'`) on `Definitions.diagrams`;
+- the CMOF carries **no OCL** (unlike the profile XMIs) - BPMN
+  constraints are normative prose in the spec; noted in the module
+  docstring rather than invented.
+
+## Result
+
+- `gen/bpmn.py`: 2,247 lines; reuses `gen.uml25._Ref` descriptors on a
+  local `_MOFBase` base - BPMN instances are deliberately NOT UML
+  Elements (checked).
+- `check_bpmn.py`: 25 checks, all green (counts, hierarchy, multi-
+  inheritance fold, instantiation/kw-args, abstract guards, enum
+  literals incl. the keyword-guarded `'None'` literal, opposite
+  wiring, composite/derived flags, DOM/external late-bound types,
+  no collision with gen.uml25 objects).
+- Generator warnings: none. 29 back-ends synthesized; 17 both-ends-
+  class-owned associations wired as opposites.
+- Suite totals: check.py 45, check_profiles.py 40, check_v1_to_v2.py
+  47, check_dodaf.py 32, check_bpmn.py 25 = **189 checks**.
+
+## Still open (honest)
+
+- `MeasurementsLibrary.xmi` (UAF instance corpus) queued for the
+  xmi21 reader - pending dialect work (prefixed UAF stereotype
+  applications).
+- DI/DC/BPMNDI CMOF packages (diagram interchange) not generated;
+  the one cross-file ref is a late-bound string.
+- BPMN has no normative SysML v2 mapping - no emitter path (would be
+  non-normative; honesty rule applies).
