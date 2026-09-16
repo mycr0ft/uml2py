@@ -57,6 +57,7 @@ xmi21.py               XMI 2.1/EMF instance reader -> gen.uml25 objects
 check*.py              five check suites (189 checks)
 calibrate_v2.py        textual-form calibration harness for sysmlpy
 REPORT.md              build journal: dialect facts, mapping tables, evidence
+PLAN.md                plan for the exporter/QoL waves (E1-E6: XMI/CMOF/EMOF writers, stereotype writing, derived unions, query helpers)
 ```
 
 ## Clean-room discipline
