@@ -1024,3 +1024,51 @@ instances of the 9 redefinition-gap classes.
 
 check_derived.py: 42 checks. Suites: 45 + 40 + 47 + 32 + 25 + 48 + 20
 + 42 = **299 checks**, all green.
+
+---
+
+# Part 13: Wave E4 - query helpers (query.py)
+
+Search API over `gen.uml25` instance graphs; standard library only;
+builds directly on E3's union evaluation and `qualified_name`.
+
+## API
+
+- `walk(root)`: deterministic DFS over composite containment
+  (derived-union `ownedElement` reads, cycle-guarded); root first,
+  then each owned subtree in declaration order.
+- `find(root, metaclass=None, stereotype=None, name=None,
+  qualified=None, pred=None, deep=True)`: predicates AND-combined.
+  `metaclass` takes a generated class or metaclass name string
+  (isinstance, so abstract metaclasses match and subclasses are
+  included); `stereotype` takes a full label ("Profile::Pkg::Name"),
+  a bare stereotype name (matched on the label's last segment), or a
+  (profile, name) pair; `qualified` compares `derived.qualified_name`;
+  `deep=False` restricts to direct children.
+- `of_type(root, cls)` (shorthand), `exists(root, ...)`,
+  `count(root, ...)`.
+- `stereotypes(el)`: resolved labels for the element's stereotype
+  applications. The reader records `base._applied_stereotypes` as
+  (profile, stereo, app_id) triples; labels resolve through the
+  generated profile modules' `_STEREO` strings (case-insensitive
+  profile segment, exact last segment), with "{profile}::{stereo}"
+  fallback. E.g. a MeasurementsLibrary property carrying the UAF
+  Measurement application resolves to "UAF::Parameters::Measurement"
+  (the profile's nsmap prefix and the _STEREO first segment agree).
+
+## Findings during the wave
+
+- `Comment` is an Element, not a NamedElement: `qualified_name` now
+  returns None for non-named elements (guard added in derived.py;
+  the corpus check over 267 named/unnamed elements still agrees with
+  an independent walk).
+- Reader-synthesized multiplicity defaults: DoDAF's walk reaches 52
+  `LiteralUnlimitedNatural` specs whose `_owner` is unwired (the
+  reader raw-sets defaults without hook wiring - E1 behavior). The
+  walk is right (they are genuinely contained); the check states the
+  exception explicitly.
+- UAF.xmi is profile-source only (see Part 12); query checks use
+  DoDAF + MeasurementsLibrary.
+
+check_query.py: 19 checks. Suites: 45 + 40 + 47 + 32 + 25 + 48 + 20 +
+42 + 19 = **318 checks**, all green.

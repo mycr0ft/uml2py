@@ -170,8 +170,9 @@ def all_namespaces(el):
 def qualified_name(el):
     """NamedElement::qualifiedName (§7.8.9.6): null unless the element
     and every namespace in allNamespaces() has a name; otherwise the
-    '::'-joined names from the outermost namespace to the element."""
-    if el.name is None:
+    '::'-joined names from the outermost namespace to the element.
+    Elements that are not NamedElements have no qualified name."""
+    if not hasattr(el, "name") or el.name is None:
         return None
     nss = all_namespaces(el)
     if any(ns.name is None for ns in nss):
