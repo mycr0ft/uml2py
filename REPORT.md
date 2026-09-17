@@ -652,3 +652,73 @@ representation - downloaded to `/mnt/TBFox/uml_xmi/`.
   the one cross-file ref is a late-bound string.
 - BPMN has no normative SysML v2 mapping - no emitter path (would be
   non-normative; honesty rule applies).
+
+---
+
+# Part 9: Wave E1 - EMF instance XMI writer (xmi_write.py) with canonical parity
+
+Plan: PLAN.md (waves E1-E6). E1 closes the write-path half of the OpenAPI
+coverage survey: read -> write -> read is now lossless on the E1 oracle
+corpus, and the writer output is canonically equal to the OMG original.
+
+## Dialect probes (P1-P3 pinned, DoDAFLibrary.xmi)
+
+- Root: `xmi:XMI`; 62 root children = 61 stereotype applications
+  (53 updm:Measurement, 7 updm:MeasurementSet, 1
+  StandardProfileL2:ModelLibrary) + uml:Model + ModelLibrary.
+- **P1**: non-containment refs = repeated feature-named child elements
+  with `xmi:idref` (annotatedElement x30, memberEnd, association, type);
+  cross-file refs = child element with `href` (x52, all `UML.xmi#String`).
+- **P2**: enum-valued features are text children (visibility), like all
+  primitives in this dialect (name, body, value); no boolean-valued
+  feature occurs in the corpus (documented convention: 'true'/'false'
+  as text children).
+- **P3**: no redefined-alias duplication occurs in this corpus; the
+  writer emits stored per-property values and canon compares
+  feature-grouped.
+
+## Writer conventions (xmi_write.py)
+
+- composite features -> nested feature-named children with
+  `xmi:type="uml:<Meta>"` and `xmi:id`; ids: stored `_xmi_id` reused
+  (round-trip stable), else deterministic `_<n>` traversal order;
+- **containment opposites never emitted**: the reader's `_hook_add`
+  wiring stores `Property.datatype` (and would store
+  `EnumerationLiteral.enumeration`, `Property.class_`, ...) in `_vals`,
+  but EMF serializes only the containment side; the writer skips the
+  feature named by the containing ref's `opp` - and only that feature
+  (a blanket owner-identity filter was tried first and wrongly dropped
+  `Comment.annotatedElement`, which EMF does emit even when it points
+  at the container);
+- `LiteralUnlimitedNatural` value 0 omitted (EMF feature default; the
+  reader's inverse rule maps empty `<lowerValue/>` to 0), '*' emitted;
+- derived/union/readonly never emitted (not settable, never stored);
+- applications emitted first at root with `base_<Meta>` idrefs
+  (base metas recorded by the reader's new `app_metas` map; fallback
+  `base_<Metaclass of base>`); `profileApplication` on the first root
+  with `xmi:type="uml:ProfileApplication"` and the appliedProfile href;
+- profile-namespace prefixes come from the reader's recorded root
+  `nsmap` (new additive reader fields: `nsmap`, `app_metas`).
+
+## Result
+
+- **Round-trip graph parity** (id-keyed signature: features, refs,
+  containment order, applications, hrefs, app metas): equal.
+- **Canonical structural parity** vs the OMG-published original
+  (canon.py, normalizations documented in its docstring): empty diff.
+- Writer is deterministic (byte-identical repeat writes).
+- Programmatic graphs (no reader involvement) round-trip; dangling
+  references raise WriteError.
+- check_xmi_write.py: 26 checks. Suites: 45 + 40 + 47 + 32 + 25 + 26
+  = **215 checks**, all green; regression suites byte-unchanged.
+
+## Honest notes
+
+- xmi:uuid is not preserved (not read); canon ignores it.
+- The profileApplication element's own xmi:id is re-derived (cosmetic;
+  canon ignores ids).
+- Booleans: unobserved in the corpus; emitted as text children per the
+  element-formatting convention.
+- Canon normalizations are documented in canon.py's docstring (id/uuid
+  ignored, feature grouping, root-order multiset, idref->containment
+  path, optional derived-<name> tolerance).

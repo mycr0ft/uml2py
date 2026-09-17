@@ -85,11 +85,14 @@ class XMI21Model:
         self.roots = []          # top-level UML Namespace objects
         self.derived_names = []  # (xmi:id, derived name) provenance record
         self.pending = []        # (obj, feature, idref|href, single)
+        self.nsmap = {}          # root prefix -> namespace URI (for writers)
+        self.app_metas = {}      # app xmi:id -> base_<Metaclass> feature name
 
 
 def read_xmi21(path) -> XMI21Model:
     root = etree.parse(str(path)).getroot()
     xmi = XMI21Model()
+    xmi.nsmap = dict(root.nsmap)
 
     def xid(e):
         return e.get(XMI_NS + "id")
@@ -240,6 +243,8 @@ def read_xmi21(path) -> XMI21Model:
                 base = xmi.objects.get(ref)
                 if base is not None:
                     xmi.apps.setdefault(ref, []).append((profile, stereo, app_id))
+                if app_id is not None:
+                    xmi.app_metas[app_id] = etree.QName(c).localname
     for base_id, lst in xmi.apps.items():
         base = xmi.objects.get(base_id)
         if base is not None:
