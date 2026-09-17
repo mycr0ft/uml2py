@@ -1072,3 +1072,70 @@ builds directly on E3's union evaluation and `qualified_name`.
 
 check_query.py: 19 checks. Suites: 45 + 40 + 47 + 32 + 25 + 48 + 20 +
 42 + 19 = **318 checks**, all green.
+
+---
+
+# Part 14: Wave E6 - EMOF writer (mm_write.write_emof)
+
+The EMOF dialect half: serialize a trimmed metamodel subset per the
+MOF 2.0/XMI Mapping Specification v2.1 ("XMI Representation of the
+Core Packages", section 6.5.2). The spec was downloaded locally
+(gitignored; note: formal/05-07-04 is UML 2.0 Superstructure - the
+mapping spec is the "MOF 2.0/XMI Mapping Specification, v2.1" PDF
+served by omg.org/spec/XMI/2.1/PDF; the plan's document label was
+corrected here).
+
+## Rules pinned (section 6.5.2 EMOF Package)
+
+- A Package/Class is an XMIObjectElement; the spec's own QName example
+  is `emof:Class` (section 6.5 prose).
+- **Derived information is not serialized** - derived properties and
+  `association` (itself derived) never appear.
+- **Properties whose values are the default values are not serialized**
+  - against the MOF 2 Core defaults (lower=1, upper=1, isOrdered=false,
+    isComposite=false, isDerived=false, visibility=public,
+    isAbstract=false).
+- **For isComposite properties the opposite Property is not serialized**
+  - EMOF has no Association: no memberEnd, no ownedEnd, no
+    owningAssociation; enumeration literals carry no classifier/
+    enumeration opposites.
+- Null values would serialize as nil='true' (unobserved at metamodel
+  level).
+
+## Construction decisions (honest notes)
+
+- Namespace `http://schema.omg.org/spec/MOF/2.0/emof.xml`: constructed
+  by analogy with the OMG-published BPMN20.cmof corpus namespace
+  (`.../cmof.xml`) plus the spec's `emof:` QName usage; the URI itself
+  is the industry-standard EMOFResource convention, not read from a
+  normative EMOF sample. No OMG-published EMOF metamodel file is in
+  the corpus set, so this writer is rule-conformant, not
+  sample-verified.
+- Shared MOF 2 Core property names (Package.ownedMember,
+  Class.ownedAttribute, Enumeration.ownedLiteral, Property.visibility/
+  lower/upper/default, Class.superClass/isAbstract) and the unprefixed
+  containment-child spelling are evidenced by BPMN20.cmof.
+- Primitive hrefs become `emof.xml#String` etc.; the MOF Element href
+  stays verbatim at its cmof.xml namespace (corpus-provenance
+  preservation, as in E5).
+- `write_emof(module, classes)`: subset selection; referenced
+  enumerations are auto-included; superClasses are written verbatim
+  even when outside the subset (name stays resolvable).
+
+## Result
+
+- 8-class BPMN subset (FlowNode, SequenceFlow, Gateway,
+  ExclusiveGateway, Task, Process, DataInput, FormalExpression) + 2
+  enums + 2 tags. Deterministic (byte-identical).
+- check_emof_write.py: 18 checks - determinism, namespace/element
+  pins, every 6.5.2 suppression rule (memberEnd absent, derived
+  absent, isOrdered=true only, visibility/isComposite/isAbstract
+  defaults suppressed), property forms (emof.xml hrefs, name idrefs,
+  verbatim external href, literals with ids/names only), a minimal
+  EMOF reader reconstructing classes/supers/attributes/multiplicities
+  equal to the source subset, and dialect parallelism with
+  write_cmof (same names, identical multi-superClass, the one
+  isOrdered property).
+
+Suites: 45 + 40 + 47 + 32 + 25 + 48 + 20 + 42 + 19 + 18 = **336
+checks**, all green. The exporter plan (E1-E6) is complete.

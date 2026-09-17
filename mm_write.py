@@ -204,3 +204,140 @@ def write_cmof(module) -> bytes:
 
     return etree.tostring(root, xml_declaration=True, encoding="UTF-8",
                           pretty_print=True)
+
+# ---------------------------------------------------------------------------
+# EMOF mode (MOF 2.0/XMI Mapping Specification v2.1, section 6.5.2)
+# ---------------------------------------------------------------------------
+# Rules pinned from the spec (formal/2005-09 = MOF 2.0/XMI Mapping
+# Specification v2.1, "XMI Representation of the Core Packages",
+# 6.5.2 EMOF Package):
+#   - a Package/Class is an XMIObjectElement (emof:Package/emof:Class,
+#     the QName example in 6.5);
+#   - derived information is NOT serialized;
+#   - properties whose values are the default values are NOT serialized
+#     (MOF 2 Core defaults: lower=1, upper=1, isOrdered=false,
+#     isComposite=false, isDerived=false, visibility=public,
+#     isAbstract=false);
+#   - for isComposite properties the opposite property is NOT serialized
+#     (EMOF has no Association: association/memberEnd never appear; the
+#     association-owned ends are simply not part of an EMOF file);
+#   - null values would serialize as nil='true' (unobserved here).
+# Shared MOF 2 Core property names (Package.ownedMember, Class
+# .ownedAttribute, Enumeration.ownedLiteral, Property.visibility/lower/
+# upper/default, Class.superClass, Class.isAbstract) and the namespace
+# construction are evidenced by the OMG-published BPMN20.cmof corpus
+# (cmof.xml <-> emof.xml); the emof namespace URI is the industry-
+# standard value for the EMOF dialect (EMOFResource convention), not
+# read from a normative EMOF sample - documented as such.
+
+EMOF = "http://schema.omg.org/spec/MOF/2.0/emof.xml"
+_EMOF_DEFAULTS = {"lower": "1", "upper": "1", "isOrdered": "false",
+                  "isComposite": "false", "isAbstract": "false",
+                  "visibility": "public", "isDerived": "false"}
+
+
+def write_emof(module, classes):
+    """Serialize a trimmed metamodel subset in the EMOF dialect.
+
+    `module` is gen.bpmn (or equivalent); `classes` is an iterable of
+    runtime class objects to include (their enums are auto-included if
+    any property is enum-typed; superClasses are written verbatim even
+    when outside the subset - the reference stays resolvable by name)."""
+    synth = getattr(module, "_SYNTH", None)
+    if synth is None:
+        raise ValueError(f"{module.__name__} carries no _SYNTH table")
+    props = synth["props"]
+    hrefs = synth["hrefs"]
+    synth_attrs = synth.get("synth_attrs", {})
+    sel = list(classes)
+    names = {c.__name__ for c in sel}
+    import sys
+    enums = [obj for name, obj in vars(module).items()
+             if isinstance(obj, type) and issubclass(obj, _enum.Enum)
+             and obj.__module__ == module.__name__
+             and any(getattr(d, "t", None) == name
+                     for c in sel for d in c.__dict__.get("_DECL", {}).values())]
+    enum_names = {e.__name__ for e in enums}
+    x = f"{{{XMI}}}"
+
+    root = etree.Element(f"{x}XMI",
+                         nsmap={"xmi": XMI, "emof": EMOF})
+    pkg = etree.SubElement(root, f"{{{EMOF}}}Package")
+    pkg.set(f"{x}id", "_0")
+    pkg.set("name", synth["package"]["name"])
+
+    def _set_defaultless(el, name, value):
+        """EMOF 6.5.2: properties with default values are not serialized."""
+        if value is None or value == _EMOF_DEFAULTS.get(name):
+            return
+        el.set(name, value)
+
+    def _emit_type(parent, t):
+        if t is None:
+            return
+        if isinstance(t, type):          # str/bool/int runtime kinds
+            frag, kind = _Prims.of(t)
+            ty = etree.SubElement(parent, "type")
+            ty.set(f"{x}type", "emof:PrimitiveType")
+            ty.set("href", f"{EMOF}#{frag}")
+        elif t == "xml.dom.Element":
+            ty = etree.SubElement(parent, "type")
+            ty.set(f"{x}type", "emof:Class")
+            ty.set("href", hrefs["Element"])
+        elif t in hrefs:                 # external href, verbatim
+            ty = etree.SubElement(parent, "type")
+            ty.set(f"{x}type", "emof:Class")
+            ty.set("href", hrefs[t])
+        else:                            # internal class / enum: idref form
+            parent.set("type", t)
+
+    for en in enums:
+        om = etree.SubElement(pkg, "ownedMember")
+        om.set(f"{x}type", "emof:Enumeration")
+        om.set(f"{x}id", en.__name__)
+        om.set("name", en.__name__)
+        for m in en:
+            lit = etree.SubElement(om, "ownedLiteral")
+            lit.set(f"{x}type", "emof:EnumerationLiteral")
+            lit.set(f"{x}id", f"{en.__name__}-{m.value}")
+            lit.set("name", m.value)
+
+    for cls in sel:
+        cname = cls.__name__
+        om = etree.SubElement(pkg, "ownedMember")
+        om.set(f"{x}type", "emof:Class")
+        om.set(f"{x}id", cname)
+        om.set("name", cname)
+        supers = [b.__name__ for b in cls.__bases__
+                  if b.__name__ != "_MOFBase"]
+        _set_defaultless(om, "superClass", " ".join(supers) if supers else None)
+        _set_defaultless(om, "isAbstract", "true" if cls._ABSTRACT else None)
+        for aname, d in cls.__dict__.get("_DECL", {}).items():
+            dotkey = f"{cname}.{aname}"
+            if dotkey in synth_attrs:
+                continue  # generator-created back-ref: no association ends
+                          # exist in EMOF, so this property stays out
+            if d.derived or d.union:
+                continue  # EMOF 6.5.2: derived information is not serialized
+            a = etree.SubElement(om, "ownedAttribute")
+            a.set(f"{x}type", "emof:Property")
+            a.set(f"{x}id", f"{cname}-{aname}")
+            a.set("name", aname)
+            lraw, uraw, vis, ordered, default = props[dotkey]
+            _set_defaultless(a, "visibility", vis)
+            _set_defaultless(a, "lower", lraw)
+            _set_defaultless(a, "upper", uraw)
+            _set_defaultless(a, "isComposite", "true" if d.composite else None)
+            _set_defaultless(a, "isOrdered", ordered)
+            _set_defaultless(a, "default", default)
+            _emit_type(a, d.t)
+
+    for i, (tname, tvalue, telement) in enumerate(synth["tags"], 1):
+        tg = etree.SubElement(root, f"{{{EMOF}}}Tag")
+        tg.set(f"{x}id", f"_{i}")
+        tg.set("name", tname)
+        tg.set("value", tvalue)
+        tg.set("element", telement)
+
+    return etree.tostring(root, xml_declaration=True, encoding="UTF-8",
+                          pretty_print=True)
