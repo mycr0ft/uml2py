@@ -13,6 +13,8 @@ from gen import uml25 as U
 import gen.sysml as sysml
 from gen.uml25 import _Ref  # noqa: F401
 
+_URI = 'https://www.omg.org/spec/UAF/20211201/UAF'
+
 class ActualMeasurementKind(_enum.Enum):
     Actual = "Actual"
     Required = "Required"

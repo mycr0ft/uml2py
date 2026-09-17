@@ -722,3 +722,109 @@ corpus, and the writer output is canonically equal to the OMG original.
 - Canon normalizations are documented in canon.py's docstring (id/uuid
   ignored, feature grouping, root-order multiset, idref->containment
   path, optional derived-<name> tolerance).
+
+---
+
+# Part 10: Wave E2 - stereotype & profile-application writing, the 2.5.1-era dialect (P10)
+
+E2 adds the second XMI dialect to the read/write pair: OMG's
+UAF 1.2 MeasurementsLibrary.xmi (UML 20161101 ns, XMI 20131001 attrs -
+the "2.5.1-era EMF" form) vs DoDAFLibrary.xmi (UML 20090901, XMI 2.1).
+
+## Dialect probes (P4/P5/P10 pinned, MeasurementsLibrary.xmi)
+
+- **P10 applications**: prefixed root-level elements
+  (`UAF:Measurement xmi:id="..." base_Property="..."`) - base_<Meta>
+  and tag values as attributes; no xmi:type on the application element.
+  76 applications: 60 Measurement (base_Property), 12 MeasurementSet
+  (base_DataType), 1 ResourceInformation + 1 Organization (base_Class),
+  2 sysml:ValueType (base_DataType) - a cross-profile application is
+  present in the corpus (SysML ValueType applied in a UAF file).
+- **P10 primitives**: name/body/visibility are attributes (88/86/64
+  occurrences); Package.URI is a text child (`<URI>...`) - the
+  genmodel serializes it as an element; both facts pinned by census.
+- **P10 references**: single-valued idrefs as attributes (association
+  x2, type x6); multi-valued refs stay children with xmi:idref
+  (annotatedElement x86, memberEnd x2); cross-file hrefs stay children
+  (type href x59 incl. PrimitiveTypes markers and UML.xmi#_0).
+- **P10 literals**: literal elements are children with `value` as an
+  attribute (`value="*"` x18 on upperValue); the 0 default is omitted
+  (18 empty lowerValue elements); LiteralInteger carries no value
+  (EMF default 0, symmetric in both directions).
+- **P4/P5**: profile applications are two `profileApplication`
+  elements (UAF.xmi#UAF, SysML.xmi#SysML) under the Model - one per
+  applied profile; no per-app required-extension data is carried.
+
+## Changes
+
+- `generate_profiles.py`: parses the profile Package's `<URI>` and emits
+  `_URI` into gen/{standard_profile,sysml,uaf}.py (only UAF.xmi carries
+  one; the others emit `_URI = None` with a comment - the applied URI is
+  dialect-dependent, e.g. 20090901-era vs 20161101-era files). Output
+  idempotent; +2 lines per module; all profile-suite checks green.
+- `xmi21.py` (additive):
+  - both XMI attribute namespaces accepted (2.1 schema.omg URI and
+    20131001 omg.org URI) via `_xget`;
+  - P10 attribute forms on walked elements: primitives (name/visibility/
+    body/URI) as unprefixed attributes, single idrefs (association, type)
+    as attributes -> pending; child form wins if both occur;
+  - `URI` is a real Package feature (UML 2.5.1) -> STRING table;
+    `packageImport`/`importedPackage`/`PackageImport` mapped; the href'd
+    importedPackage becomes a synthetic Package marker (generalized
+    href-marker machinery beyond `type`);
+  - application elements: base_<Meta> attributes (P10) and tag values
+    (app_tags, new field); 2.1 child-form tag text children parsed
+    symmetrically (unobserved, documented);
+  - one MagicDraw header extension remains unmapped:
+    `metamodelReference` on the Model (references the packageImport id).
+- `xmi_write.py`:
+  - XMI dialect derived from nsmap['xmi']: the 2.1 URI keeps the E1
+    (DoDAF) byte-parity forms; any later URI emits the P10 form;
+    nsmap['uml'] likewise overrides the UML namespace;
+  - applications: prefixed elements with base_<Meta> (and tag)
+    attributes in P10; base feature from the applied metaclass, falling
+    back to the profile module's `_EXTENSIONS` (most-general = first
+    entry) when the base is an id string; profile-module `_URI` resolves
+    the namespace when nsmap lacks the prefix;
+  - tags: attributes (P10) or text children (2.1), from an optional 6th
+    app-tuple slot (apps_from_model merges the reader's app_tags);
+  - profile applications: one `<profileApplication>` element per
+    applied-profile href (the reader flattens the corpus form).
+- `canon.py`: both XMI URIs for id/uuid/idref/type; `drop_feats_at`
+  ({xmi_id: {feature names}}) for tool-specific header features; the
+  reader-derived name is also dropped in attribute form.
+
+## Result
+
+- **ML round-trip**: 221 objects, 76 applications, 59 hrefs, app
+  metas, Model URI, packageImport all preserved; full graph signature
+  equal; re-read has zero unmapped features.
+- **ML canonical parity** vs the OMG original: empty diff, dropping
+  only `metamodelReference` (MagicDraw extension; UnmappedFeature note)
+  and the two reader-derived names (RSA/UUID-tail rule).
+- **DoDAF unchanged**: 2.1 path byte-parity and canon parity preserved
+  (check_xmi_write.py E1 checks green unchanged).
+- Programmatic application writing: profile-module `_URI` resolution,
+  `_EXTENSIONS` base fallback for string bases, tags both dialects,
+  unresolvable-profile WriteError.
+- check_xmi_write.py: 48 checks. Suites: 45 + 40 + 47 + 32 + 25 + 48
+  = **237 checks**, all green; regression suites unchanged.
+
+## Honest notes
+
+- `metamodelReference` is a MagicDraw extension (not a UML 2.5
+  metaclass feature); flagged as unmapped_features, canon-dropped,
+  documented here. Its target (the packageImport element) round-trips.
+- P10 single-ref-as-attribute is pinned by the ML corpus (association,
+  type); no other single-ref feature occurs there.
+- P10 primitive-as-attribute set is pinned to observations:
+  name/visibility/body and literal `value`; Package.URI is observed as
+  a text child (genmodel element-serialization choice), everything
+  else unobserved stays a child by default.
+- StandardProfile/SysML profile modules carry `_URI = None`: their OMG
+  XMI has no <URI> child; applications of those profiles need the
+  dialect's nsmap (or a future user-supplied URI) - documented in the
+  writer docstring.
+- Tag values are typed as strings in both forms; no tag exists in
+  either corpus (both corpora carry none), so no enum-typed tag
+  round-trip is demonstrated yet.

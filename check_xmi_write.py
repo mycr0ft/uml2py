@@ -192,6 +192,128 @@ except W.WriteError:
     raised = True
 check("dangling reference raises WriteError", raised)
 
+print("== E2: MeasurementsLibrary.xmi (XMI 2.5.1-era EMF dialect, P10) ==")
+import gen.uaf as UA  # noqa: E402
+import gen.sysml as SY  # noqa: E402
+
+ML = "/mnt/TBFox/uml_xmi/MeasurementsLibrary.xmi"
+MLRT = "/tmp/ml_e1_roundtrip.xmi"
+ml1 = xmi21.read_xmi21(ML)
+mlapps = W.apps_from_model(ml1)
+mldata = W.write_xmi(ml1.roots, apps=mlapps, nsmap=ml1.nsmap,
+                     profile_applications=ml1.profiles)
+mldata2 = W.write_xmi(ml1.roots, apps=mlapps, nsmap=ml1.nsmap,
+                      profile_applications=ml1.profiles)
+check("ML write is deterministic (byte-identical)", mldata == mldata2)
+open(MLRT, "wb").write(mldata)
+ml2 = xmi21.read_xmi21(MLRT)
+check("ML round-trip object count (221)",
+      len(ml1.objects) == len(ml2.objects) == 221,
+      f"{len(ml1.objects)} -> {len(ml2.objects)}")
+check("ML applications preserved (76, prefixed dialect)",
+      sum(len(v) for v in ml1.apps.values())
+      == sum(len(v) for v in ml2.apps.values()) == 76)
+check("ML app metas preserved", ml1.app_metas == ml2.app_metas)
+bad = graph_equal(ml1, ml2)
+check("ML full graph signature equal", bad is None,
+      "" if bad is None else f"{bad[0]}: {bad[1]} != {bad[2]}")
+mid = next(o._xmi_id for o in ml1.objects.values()
+           if type(o).__name__ == "Model")
+check("Model URI feature read and round-tripped",
+      ml1.objects[mid]._vals.get("URI")
+      == "https://www.omg.org/spec/UAF/20211201/MeasurementsLibrary"
+      and ml2.objects[mid]._vals.get("URI")
+      == "https://www.omg.org/spec/UAF/20211201/MeasurementsLibrary")
+check("packageImport imported via href marker",
+      any(feat == "importedPackage"
+          and "spec/UML/20161101/UML.xmi#_0" in ref
+          for _, feat, ref in ml1.hrefs)
+      and ml1.hrefs == ml2.hrefs)
+check("only unmapped feature is the MagicDraw header reference",
+      ml1.unmapped_features == [(mid, "metamodelReference")]
+      and not ml2.unmapped_features)
+check("profile applications: one element per applied profile",
+      sum(1 for c in ml2.roots[0]._vals["packageImport"] if False) == 0
+      and len(ml1.profiles) == 2)
+diffs = canon.compare(ML, MLRT,
+                      drop_names_at={i for i, _ in ml1.derived_names},
+                      drop_feats_at={mid: {"metamodelReference"}})
+check("ML canonical parity vs OMG original", not diffs, str(diffs[:1]))
+# P10 serialization conventions
+from lxml import etree  # noqa: E402
+X31 = "{http://www.omg.org/spec/XMI/20131001}"
+tr = etree.parse(MLRT).getroot()
+check("ML written root is 20131001 xmi:XMI",
+      tr.tag == f"{X31}XMI")
+app0 = next(c for c in tr if etree.QName(c).namespace
+            and "UAF" in etree.QName(c).namespace)
+check("P10 applications: prefixed elements with base_<Meta> attributes",
+      etree.QName(app0).localname == "Measurement"
+      and app0.get("base_Property") is not None
+      and not [c for c in app0])
+model0 = next(c for c in tr if etree.QName(c).localname == "Model")
+check("P10 primitives as attributes (name, visibility); URI as text child",
+      model0.get("name") == "Measurements Library"
+      and any(c.tag == "URI" and (c.text or "").strip()
+              for c in model0))
+up0 = next(e for e in tr.iter()
+           if e.get(X31 + "type") == "uml:LiteralUnlimitedNatural"
+           and e.get("value"))
+check("P10 literal values as attributes; 0-default omitted",
+      up0.get("value") == "*"
+      and not any(etree.QName(c).localname == "value" for c in up0))
+check("one profileApplication per applied profile",
+      sum(1 for e in tr.iter()
+          if etree.QName(e).localname == "profileApplication") == 2
+      and ml1.profiles == ["http://www.omg.org/spec/UAF/20211110/UAF.xmi#UAF",
+                           "http://www.omg.org/spec/SysML/20181001/SysML.xmi#SysML"])
+
+print("== E2: programmatic application writing ==")
+P10NS = {"xmi": "http://www.omg.org/spec/XMI/20131001",
+         "uml": "http://www.omg.org/spec/UML/20161101",
+         "UAF": UA._URI}
+pkgp = U.Package(name="PA")
+clsx = U.Class(name="CX")
+pkgp.add("packagedElement", clsx)
+pr = U.Property(name="p1")
+clsx.add("ownedAttribute", pr)
+apps = [("UAF", "Measurement", pr, "app1", None)]
+data = W.write_xmi([pkgp], apps=apps, nsmap=P10NS, profiles={"UAF": UA})
+open("/tmp/prog_app.xmi", "wb").write(data)
+mp = xmi21.read_xmi21("/tmp/prog_app.xmi")
+check("profile-module _URI resolves the application namespace",
+      sum(len(v) for v in mp.apps.values()) == 1
+      and next(iter(mp.apps.values()))[0][1] == "Measurement")
+check("base feature from the applied metaclass (base_Property)",
+      list(mp.app_metas.values()) == ["base_Property"])
+apps2 = [("UAF", "UAFElement", "external-id", None, None)]
+data2 = W.write_xmi([pkgp], apps=apps2, nsmap=P10NS, profiles={"UAF": UA})
+check("_EXTENSIONS fallback for a string base (base_Element)",
+      b'base_Element="external-id"' in data2)
+try:
+    W.write_xmi([pkgp], apps=[("Nope", "S", pr, None, None)])
+    raised = False
+except W.WriteError:
+    raised = True
+check("unresolvable profile raises WriteError", raised)
+apps3 = [("UAF", "Measurement", pr, "app2", None, {"measurementName": "kg"})]
+data3 = W.write_xmi([pkgp], apps=apps3, nsmap=P10NS, profiles={"UAF": UA})
+check("tagged values as P10 attributes",
+      b'measurementName="kg"' in data3)
+data5 = W.write_xmi([pkgp], apps=apps3, profiles={"UAF": UA})  # 2.1 dialect
+open("/tmp/prog_app21.xmi", "wb").write(data5)
+mp5 = xmi21.read_xmi21("/tmp/prog_app21.xmi")
+check("tagged values as 2.1 text children (round-trips via app_tags)",
+      b"<measurementName>kg</measurementName>" in data5
+      and list(mp5.app_tags.values()) == [{"measurementName": "kg"}])
+sysml_ns = "http://www.omg.org/spec/SysML/20181001"
+data4 = W.write_xmi([pkgp],
+                    apps=[("sysml", "ValueType", pr, None, None)],
+                    nsmap={"sysml": sysml_ns})
+check("cross-profile application via nsmap prefix (sysml ValueType)",
+      b"{http://www.omg.org/spec/SysML/20181001}ValueType" in data4
+      or "ValueType" in data4.decode())
+
 print()
 print(f"RESULT: {len(PASS)} passed, {len(FAIL)} failed")
 if FAIL:

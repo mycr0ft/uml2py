@@ -25,6 +25,12 @@ Dialect features handled (all distinct from the UML 2.5 metamodel XMI):
     (e.g. `updm:Measurement`, `StandardProfileL2:ModelLibrary`) holding
     `base_<Metaclass xmi:idref="...">` extension ends -- UML 2.1-style
     profile application, collected as an application map (not folded).
+    The XMI 2.5.1-era EMF dialect (MeasurementsLibrary.xmi, P10) instead
+    writes applications as prefixed elements with `base_<Metaclass>`
+    attributes; both forms are read (attribute-tagged values are kept
+    in `app_tags`).
+  - Both XMI attribute namespaces are accepted: the 2.1 schema.omg URI
+    and the 20131001 omg.org URI (the corpora carry one or the other).
 
 Objects are instances of the generated gen.uml25 metaclasses, so the
 v1->v2 emitter works on the result unchanged.
@@ -41,11 +47,12 @@ XMI_NS = "{http://schema.omg.org/spec/XMI/2.1}"
 COMPOSITE = {"packagedElement", "nestedClassifier", "ownedAttribute",
              "ownedLiteral", "ownedEnd", "ownedComment", "ownedConnector",
              "ownedParameter", "ownedOperation", "ownedMember", "region",
-             "subvertex", "transition"}
+             "subvertex", "transition", "packageImport"}
 # single-value string features
-STRING = {"name", "body", "visibility", "language"}
+STRING = {"name", "body", "visibility", "language", "URI"}
 # single reference features
-REF_SINGLE = {"type", "association", "general", "classifier", "specification"}
+REF_SINGLE = {"type", "association", "general", "classifier",
+              "specification", "importedPackage"}
 # multi reference features (may arrive before their targets)
 REF_MULTI = {"memberEnd", "annotatedElement", "client", "supplier"}
 # multiplicity literal features
@@ -58,7 +65,8 @@ CONSTRUCTIBLE = {"Model", "Package", "Class", "DataType", "Enumeration",
                  "LiteralUnlimitedNatural", "LiteralString", "Operation",
                  "OpaqueExpression", "Connector", "ConnectorEnd",
                  "Generalization", "InstanceSpecification", "Slot",
-                 "InstanceValue", "Dependency", "Interface"}
+                 "InstanceValue", "Dependency", "Interface",
+                 "PackageImport"}
 
 # metaclasses for which a missing name is derived from the xmi:id tail
 # (recorded in derived_names, never silently invented)
@@ -87,6 +95,18 @@ class XMI21Model:
         self.pending = []        # (obj, feature, idref|href, single)
         self.nsmap = {}          # root prefix -> namespace URI (for writers)
         self.app_metas = {}      # app xmi:id -> base_<Metaclass> feature name
+        self.app_tags = {}       # app xmi:id -> {tag name: string value}
+
+
+XMI_NS_20131001 = "http://www.omg.org/spec/XMI/20131001"
+
+
+def _xget(e, name):
+    """Value of an xmi-namespaced attribute under either XMI dialect URI."""
+    v = e.get(XMI_NS + name)
+    if v is None:
+        v = e.get("{" + XMI_NS_20131001 + "}" + name)
+    return v
 
 
 def read_xmi21(path) -> XMI21Model:
@@ -95,10 +115,10 @@ def read_xmi21(path) -> XMI21Model:
     xmi.nsmap = dict(root.nsmap)
 
     def xid(e):
-        return e.get(XMI_NS + "id")
+        return _xget(e, "id")
 
     def xtype(e):
-        return e.get(XMI_NS + "type")
+        return _xget(e, "type")
 
     def is_uml_ns(e):
         ns = etree.QName(e).namespace or ""
@@ -127,6 +147,21 @@ def read_xmi21(path) -> XMI21Model:
         return obj
 
     def walk(el, obj):
+        # XMI 2.5.1-era EMF dialect (P10): primitive-valued features and
+        # single idrefs can arrive as unprefixed attributes (name=,
+        # visibility=, body=, association=, type=). The child form wins if
+        # both occur (children are processed after).
+        for k, v in el.attrib.items():
+            auri, _, al = k.rpartition("}")
+            if auri or al in LITERAL or al == "href":
+                continue
+            d = obj._props.get(al)
+            if d is None or d.multi or d.derived or d.readonly:
+                continue
+            if d.t is str or al in STRING:
+                obj._vals[al] = v
+            elif al in REF_SINGLE:
+                xmi.pending.append((obj, al, v, True))
         for c in el:
             feat = etree.QName(c).localname
             if feat in STRING:
@@ -142,6 +177,9 @@ def read_xmi21(path) -> XMI21Model:
                           if etree.QName(g).localname == "value"), None)
                 text = v.text.strip() if v is not None and v.text \
                     and v.text.strip() else None
+                if text is None:
+                    av = c.get("value")   # P10: value as attribute
+                    text = av.strip() if av and av.strip() else None
                 if isinstance(lit, U.LiteralString):
                     if text is not None:
                         lit._vals["value"] = text
@@ -159,7 +197,7 @@ def read_xmi21(path) -> XMI21Model:
                         # empty <lowerValue/> = 0, i.e. [0..*] with '*').
                         lit._vals["value"] = U.UnlimitedNatural(0)
                 continue
-            idref = c.get(XMI_NS + "idref")
+            idref = _xget(c, "idref")
             href = c.get("href")
             if feat in REF_SINGLE:
                 if idref is not None or href is not None:
@@ -207,12 +245,24 @@ def read_xmi21(path) -> XMI21Model:
         if ref.startswith("http"):
             xmi.hrefs.append((obj._xmi_id if hasattr(obj, "_xmi_id") else "?",
                               feat, ref))
-            if feat == "type":
-                # synthetic stand-in for an OMG-published external type
+            if single:
+                # cross-file marker: OMG-published target, recorded verbatim
                 frag = ref.split("#")[-1]
                 st = xmi.synthetic_types.get(frag)
                 if st is None:
-                    st = U.DataType(name=frag)
+                    if feat == "type":
+                        cls = U.DataType   # Type is abstract; EMF markers
+                    else:
+                        d = obj._props.get(feat)
+                        tname = d.t if d is not None and isinstance(d.t, str) \
+                            else None
+                        cls = U.metaclass(tname) if tname else None
+                        if cls is not None \
+                                and cls.__name__ not in CONSTRUCTIBLE:
+                            cls = None
+                    if cls is None:
+                        continue
+                    st = cls(name=frag)
                     st._external_href = ref
                     xmi.synthetic_types[frag] = st
                 setattr(obj, feat, st)
@@ -238,13 +288,31 @@ def read_xmi21(path) -> XMI21Model:
         stereo = etree.QName(e).localname
         profile = e.prefix or ns.rsplit("/", 1)[-1]
         for c in e:
-            if etree.QName(c).localname.startswith("base_"):
-                ref = c.get(XMI_NS + "idref")
+            ln3 = etree.QName(c).localname
+            if ln3.startswith("base_"):
+                ref = _xget(c, "idref")
                 base = xmi.objects.get(ref)
                 if base is not None:
                     xmi.apps.setdefault(ref, []).append((profile, stereo, app_id))
                 if app_id is not None:
-                    xmi.app_metas[app_id] = etree.QName(c).localname
+                    xmi.app_metas[app_id] = ln3
+            elif app_id is not None and (c.text or "").strip():
+                # 2.1-dialect tagged value as a text child (unobserved in
+                # the corpora; symmetric with the writer's emission)
+                xmi.app_tags.setdefault(app_id, {})[ln3] = c.text.strip()
+        # XMI 2.5.1-era EMF dialect (P10): base_<Metaclass> and tag values
+        # as unprefixed attributes on the (prefixed) application element
+        for k, v in e.attrib.items():
+            auri, _, al = k.rpartition("}")
+            if auri or not al.startswith("base_"):
+                if not auri and app_id is not None:
+                    xmi.app_tags.setdefault(app_id, {})[al] = v
+                continue
+            base = xmi.objects.get(v)
+            if base is not None:
+                xmi.apps.setdefault(v, []).append((profile, stereo, app_id))
+            if app_id is not None:
+                xmi.app_metas[app_id] = al
     for base_id, lst in xmi.apps.items():
         base = xmi.objects.get(base_id)
         if base is not None:

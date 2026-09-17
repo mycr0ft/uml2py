@@ -23,6 +23,12 @@ canonical form and report divergences. Normalizations (the "dialect table"):
   - drop_names_at: an optional set of xmi:ids whose <name> children are
     ignored in BOTH documents (readers may derive names for unnamed
     elements; a re-written file carries them explicitly).
+  - drop_feats_at: an optional {xmi_id: {feature names}} map whose child
+    feature groups are ignored in BOTH documents (tool-specific model
+    headers a writer does not reconstruct; every dropped feature must be
+    recorded as an UnmappedFeature note with an anchor).
+  - xmi attribute namespace: both the 2.1 schema.omg URI and the
+    20131001 omg.org URI are accepted for id/uuid/idref/type.
 
 Standard library only.
 """
@@ -30,7 +36,8 @@ from __future__ import annotations
 
 import xml.etree.ElementTree as ET
 
-XMI = "http://schema.omg.org/spec/XMI/2.1"
+XMI_URIS = ("http://schema.omg.org/spec/XMI/2.1",
+            "http://www.omg.org/spec/XMI/20131001")
 
 
 def _split(tag):
@@ -44,15 +51,25 @@ def _local(tag):
     return _split(tag)[1]
 
 
-def canonize(path, drop_names_at=frozenset()):
+def _xattr(e, name):
+    """Value of an xmi-namespaced attribute under either XMI dialect URI."""
+    for uri in XMI_URIS:
+        v = e.get(f"{{{uri}}}{name}")
+        if v is not None:
+            return v
+    return None
+
+
+def canonize(path, drop_names_at=frozenset(), drop_feats_at=None):
     """Canonical form of an XML document as a nested hashable structure."""
     root = ET.parse(str(path)).getroot()
+    drop_feats = {k: frozenset(v) for k, v in (drop_feats_at or {}).items()}
 
     # ---- containment paths for idref resolution ---------------------------
     parent = {c: p for p in root.iter() for c in p}
     idmap = {}
     for e in root.iter():
-        i = e.get(f"{{{XMI}}}id")
+        i = _xattr(e, "id")
         if i is not None:
             idmap[i] = e
 
@@ -70,13 +87,18 @@ def canonize(path, drop_names_at=frozenset()):
     paths = {e: path_of(e) for e in idmap.values()}
 
     def node(e):
+        eid = _xattr(e, "id")
+        drop_here = drop_feats.get(eid, frozenset())
         attrs = {}
         for k, v in e.attrib.items():
             uri, local = _split(k)
-            if uri == XMI and local in ("id", "uuid"):
+            if uri in XMI_URIS and local in ("id", "uuid"):
                 continue
-            if uri == XMI and local == "type":
+            if uri in XMI_URIS and local == "type":
                 v = v.split(":")[-1]
+            if (uri == "" and local == "name" and drop_names_at is not None
+                    and eid is not None and eid in drop_names_at):
+                continue  # reader-derived name (attribute form)
             attrs[(uri, local)] = v
         text = (e.text or "").strip() or None
 
@@ -84,10 +106,11 @@ def canonize(path, drop_names_at=frozenset()):
         for c in e:
             f = _local(c.tag)
             if f == "name" and drop_names_at is not None:
-                pid = e.get(f"{{{XMI}}}id")
-                if pid is not None and pid in drop_names_at:
+                if eid is not None and eid in drop_names_at:
                     continue
-            ref = c.get(f"{{{XMI}}}idref")
+            if drop_here and f in drop_here:
+                continue
+            ref = _xattr(c, "idref")
             href = c.get("href")
             if ref is not None:
                 tgt = idmap.get(ref)
@@ -110,10 +133,10 @@ def canonize(path, drop_names_at=frozenset()):
     return repr(((_split(root.tag)[0], _split(root.tag)[1]), tuple(top)))
 
 
-def compare(a_path, b_path, drop_names_at=None):
+def compare(a_path, b_path, drop_names_at=None, drop_feats_at=None):
     """Canonical-compare two XML documents; return a list of divergences."""
-    ca = canonize(a_path, drop_names_at)
-    cb = canonize(b_path, drop_names_at)
+    ca = canonize(a_path, drop_names_at, drop_feats_at)
+    cb = canonize(b_path, drop_names_at, drop_feats_at)
     if ca == cb:
         return []
     # locate the first divergence for a useful message

@@ -115,6 +115,30 @@ def _feat_kind(d):
     return "ref"
 
 
+def _app_uri(profile, nsmap, profiles):
+    """Namespace URI for an application's profile: nsmap prefix first,
+    then the profile module's _URI (only carried by UAF.xmi; the
+    StandardProfile / SysML XMI have no <URI> child)."""
+    if profile in nsmap:
+        return nsmap[profile]
+    mod = (profiles or {}).get(profile)
+    if mod is not None and getattr(mod, "_URI", None):
+        return mod._URI
+    raise WriteError(
+        f"application profile {profile!r} has no namespace URI (missing "
+        f"from nsmap and no _URI on the provided profile module)")
+
+
+def _ext_base(profiles, profile, stereo):
+    """base_<Metaclass> feature for a stereotype from the profile module's
+    _EXTENSIONS table (most-general extended metaclass = first entry)."""
+    mod = (profiles or {}).get(profile)
+    ext = getattr(mod, "_EXTENSIONS", None) if mod is not None else None
+    if ext and ext.get(stereo):
+        return "base_" + ext[stereo][0][0]
+    return None
+
+
 def _apps_key(app):
     return (app[0], app[1], app[3] if len(app) > 3 else "",
             app[2] if isinstance(app[2], str) else id(app[2]),
@@ -132,22 +156,36 @@ def apps_from_model(m):
             meta = m.app_metas.get(app_id) \
                 or (f"base_{type(base).__name__}" if base is not None
                     else None)
-            out.append((profile, stereo, base_id, app_id, meta))
+            out.append((profile, stereo, base_id, app_id, meta,
+                        dict(m.app_tags.get(app_id) or {})))
     out.sort(key=_apps_key)
     return out
 
 
 def write_xmi(roots, apps=None, nsmap=None, profile_applications=(),
-              uml_ns=UML_NS_DEFAULT):
+              uml_ns=UML_NS_DEFAULT, profiles=None):
     """Serialize an object graph (and optional profile applications) as
-    EMF-dialect XMI 2.1. Returns bytes."""
+    EMF-dialect XMI. Returns bytes.
+
+    The XMI dialect is taken from nsmap['xmi'] when present: the 2003-era
+    2.1 URI (DoDAFLibrary.xmi) writes applications with base_<Meta> idref
+    children; any later URI (MeasurementsLibrary.xmi, P10) writes the
+    2.5.1-era EMF form - prefixed application elements with base_<Meta>
+    (and tag) attributes. nsmap['uml'] likewise overrides uml_ns.
+    `profiles` maps a profile name to its generated module (with _URI /
+    _EXTENSIONS) for applications whose URI is not in nsmap."""
     apps = sorted(apps or [], key=_apps_key)
     nsmap = dict(nsmap or {"xmi": XMI_NS, "uml": uml_ns})
+    xmi_uri = nsmap.get("xmi", XMI_NS)
+    if "xmi" not in nsmap:
+        nsmap = {"xmi": xmi_uri, **nsmap}
+    uml_ns = nsmap.get("uml", uml_ns)
+    p10 = xmi_uri != XMI_NS
     ids = _Ids()
     graph = _iter_graph(roots)
     in_graph = {id(el) for el in graph}
 
-    root = etree.Element(f"{{{XMI_NS}}}XMI", nsmap=nsmap)
+    root = etree.Element(f"{{{xmi_uri}}}XMI", nsmap=nsmap)
 
     def ref_child(parent, name, target):
         href = getattr(target, "_external_href", None)
@@ -159,27 +197,45 @@ def write_xmi(roots, apps=None, nsmap=None, profile_applications=(),
             raise WriteError(
                 f"{name}: reference target {type(target).__name__!r} is "
                 f"outside the written graph (dangling)")
-        c.set(f"{{{XMI_NS}}}idref", ids.ident(target))
+        c.set(f"{{{xmi_uri}}}idref", ids.ident(target))
         return c
 
     # ---- stereotype applications first (corpus document order) -----------
-    for profile, stereo, base, app_id, base_feat in apps:
-        uri = nsmap.get(profile)
-        if uri is None:
-            raise WriteError(
-                f"application prefix {profile!r} missing from nsmap")
+    for app in apps:
+        profile, stereo, base, app_id, base_feat = app[:5]
+        tags = app[5] if len(app) > 5 else None
+        uri = _app_uri(profile, nsmap, profiles)
         a = etree.SubElement(root, f"{{{uri}}}{stereo}")
         if app_id:
-            a.set(f"{{{XMI_NS}}}id", app_id)
-        base_id = base if isinstance(base, str) else ids.ident(base)
+            a.set(f"{{{xmi_uri}}}id", app_id)
+        if isinstance(base, str):
+            base_id = base
+            if not base_feat:
+                base_feat = _ext_base(profiles, profile, stereo)
+                if base_feat is None:
+                    raise WriteError(
+                        f"application {profile}::{stereo}: base element "
+                        f"given as id without base_<Meta> feature and no "
+                        f"profiles module to resolve it")
+        else:
+            base_id = ids.ident(base)
         bf = base_feat or "base_" + type(base).__name__
-        etree.SubElement(a, bf).set(f"{{{XMI_NS}}}idref", base_id)
+        if p10:
+            a.set(bf, base_id)
+            for tk, tv in sorted((tags or {}).items()):
+                a.set(tk, tv)
+        else:
+            etree.SubElement(a, bf).set(f"{{{xmi_uri}}}idref", base_id)
+            if tags:
+                for tk, tv in sorted(tags.items()):
+                    tc = etree.SubElement(a, tk)
+                    tc.text = tv
 
     # ---- UML elements ------------------------------------------------------
     def build(el, parent, tag, owner=None, opp_name=None):
         e = etree.SubElement(parent, tag)
-        e.set(f"{{{XMI_NS}}}type", f"uml:{type(el).__name__}")
-        e.set(f"{{{XMI_NS}}}id", ids.ident(el))
+        e.set(f"{{{xmi_uri}}}type", f"uml:{type(el).__name__}")
+        e.set(f"{{{xmi_uri}}}id", ids.ident(el))
         for name, d in type(el)._props.items():
             v = el._vals.get(name)
             if v is None:
@@ -205,27 +261,43 @@ def write_xmi(roots, apps=None, nsmap=None, profile_applications=(),
             elif kind == "text":
                 omit_default = (name == "value"
                                 and isinstance(el, U.LiteralUnlimitedNatural))
+                # P10: name/visibility/body and literal values as attributes
+                use_attr = p10 and (
+                    name in ("name", "visibility", "body")
+                    or (name == "value" and isinstance(
+                        el, (U.LiteralInteger, U.LiteralUnlimitedNatural,
+                             U.LiteralString))))
                 for it in items:
                     txt = _text(it)
                     if omit_default and txt == "0":
                         continue  # EMF default: no child
-                    c = etree.SubElement(e, name)
-                    c.text = txt
+                    if use_attr:
+                        e.set(name, txt)
+                    else:
+                        c = etree.SubElement(e, name)
+                        c.text = txt
             else:
                 if name == opp_name and any(it is owner for it in items):
                     continue  # containment opposite: derivable, not emitted
                 for it in items:
-                    ref_child(e, name, it)
+                    # P10: single-valued references as attributes (the
+                    # cross-file href form stays a child element)
+                    if p10 and not d.multi \
+                            and not getattr(it, "_external_href", None):
+                        e.set(name, ids.ident(it))
+                    else:
+                        ref_child(e, name, it)
         return e
 
     built_roots = [build(r, root, f"{{{uml_ns}}}{type(r).__name__}")
                    for r in roots]
 
-    # profile applications recorded on the first root
+    # profile applications recorded on the first root (one per applied
+    # profile href; the reader flattens the corpus form)
     if profile_applications and built_roots:
-        pa = etree.SubElement(built_roots[0], "profileApplication")
-        pa.set(f"{{{XMI_NS}}}type", "uml:ProfileApplication")
         for h in profile_applications:
+            pa = etree.SubElement(built_roots[0], "profileApplication")
+            pa.set(f"{{{xmi_uri}}}type", "uml:ProfileApplication")
             ap = etree.SubElement(pa, "appliedProfile")
             ap.set("href", h)
 

@@ -5,7 +5,7 @@
       "module": "gen/standard_profile.py",
       "stereotypes": 33,
       "enums": [],
-      "lines": 231
+      "lines": 233
     },
     {
       "profile": "SysML",
@@ -17,7 +17,7 @@
         "FlowDirectionKind",
         "VerdictKind"
       ],
-      "lines": 1464
+      "lines": 1466
     },
     {
       "profile": "UAF",
@@ -45,7 +45,7 @@
         "ValueItemKind",
         "WholeLifeConfigurationKind"
       ],
-      "lines": 3750
+      "lines": 3752
     }
   ],
   "warnings": [

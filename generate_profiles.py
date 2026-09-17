@@ -189,6 +189,8 @@ def parse_profile(path):
     r = etree.parse(str(path)).getroot()
     prof = next(e for e in r.iter() if ln(e) == "Profile")
     profile = prof.get("name")
+    uri = next((e.text.strip() for e in prof
+                if ln(e) == "URI" and e.text and e.text.strip()), None)
     xid_key = "{http://www.omg.org/spec/XMI/20131001}id"
     idmap = {el.get(xid_key): el for el in r.iter() if el.get(xid_key)}
     warns = []
@@ -312,7 +314,7 @@ def parse_profile(path):
             if b not in stereotypes:
                 warns.append(f"{s.name}: stereotype base {b!r} unresolved")
 
-    return dict(profile=profile, stereotypes=stereotypes, enums=enums,
+    return dict(profile=profile, uri=uri, stereotypes=stereotypes, enums=enums,
                 extensions=exts, warns=warns)
 
 
@@ -446,6 +448,14 @@ def emit_module(d, metaclasses, warns):
     if uses_sysml:
         w("import gen.sysml as sysml")
     w("from gen.uml25 import _Ref  # noqa: F401")
+    w("")
+    # profile URI, as carried by the OMG profile XMI (UAF.xmi has one;
+    # StandardProfile.xmi / sysml.xmi do not - the applied URI is then
+    # dialect-dependent, e.g. 20090901-era vs 20161101-era files)
+    if d.get("uri"):
+        w(f'_URI = {d["uri"]!r}')
+    else:
+        w("_URI = None  # profile XMI carries no <URI>; applied URI is dialect-dependent")
     w("")
     for ename, lits in sorted(d["enums"].items()):
         w(f"class {ename}(_enum.Enum):")
