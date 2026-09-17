@@ -925,3 +925,102 @@ the OMG CMOF file with canonical parity.
 - The writer derives association/owningAssociation on ends, literal
   classifier/enumeration, and end ids "<assoc>-<name>" by convention;
   all verified against the file.
+
+---
+
+# Part 12: Wave E3 - normative UML 2.5.1 derivations (derived.py)
+
+The spec-normative derivation layer: free functions over `gen.uml25`
+objects (generated modules stay byte-frozen), implemented from the
+OCL bodies of UML 2.5.1 formal/2017-12-05 (downloaded to `spec/`,
+gitignored). Standard library only.
+
+## Implemented derivations (spec anchors)
+
+- Element §7.8.6: `owner` (the /owner union, computed as the
+  containment inverse by the runtime), `all_owned_elements`
+  (ownedElement DFS with a global seen-set: the OCL is set-valued, so
+  ill-formed ownership cycles drop, not re-walk), `must_be_owned`
+  (§7.8.6.5 body true; §12.4.5.7 redefines false for Package).
+- NamedElement/Namespace §7.8.9/§7.8.10: `all_namespaces` (ordered
+  innermost-first, **including the template-parameter branch**:
+  owner is a TemplateParameter -> walk
+  signature.template.allNamespaces()->prepend(template)),
+  `qualified_name` ('::'-joined from the outermost namespace; null
+  unless the element and every namespace has a name), `separator`.
+  Namespace §7.8.10: `get_names_of_member` (ownedMember / ElementImport
+  alias / PackageImport recursion, exactly the OCL branches),
+  `imported_member` via `import_members`/`exclude_collisions`/
+  `is_distinguishable_from` (full fidelity), `visible_members`/
+  `makes_visible` (§12.4.5.6).
+- Classifier §9.2.4: `parents` (generalization.general),
+  `all_parents` (seen-set-guarded transitive closure),
+  `all_features`/`all_attributes` (over the **normative member**),
+  `has_visibility_of`, `conforms_to`; normative member =
+  stored member union + computed `inherited_member`
+  (inherit(parents().inheritableMembers)) + computed
+  `imported_member` - on instance models those two are stored as null,
+  so computing them is the only faithful reading.
+- MultiplicityElement §7.8.8: `lower_bound`/`upper_bound`
+  (lowerValue/upperValue integerValue; on instance models the XMI
+  carries the derived `lower`/`upper` directly, so the carried value is
+  the fall-back - documented deviation from the literal "1 otherwise",
+  which applies when neither is given).
+- Property §9.9.17: `is_composite` (= aggregation == composite),
+  `opposite` (other end of a binary association), `subsetting_context`.
+
+## Derived-union evaluation (union())
+
+UML 2.5.1 §7.6.3: "the collection of values denoted by the Property in
+some context is derived by being the strict union of all of the values
+denoted, in the same context, by Properties defined to subset it".
+`derived.union(el, name)` implements this over the generated `_UNIONS`
+tables with two additions beyond the runtime's generation-time
+flattening (`_Ref._union`):
+
+1. a contributing property that is itself a derived union is expanded
+   recursively (cycle-guarded) - the generated tables record no union
+   contribs (verified: 0), so this is currently a no-op safety net;
+2. a property that REDEFINES a property that subsets a union also
+   contributes: any reference to a redefined member resolves to the
+   redefining member (§9.2.3.3), so its values are values of the
+   subsetted property. This closure is load-bearing: a scan of the
+   generated tables finds exactly **9** metaclasses whose union
+   contribution arrives only through redefinition (LoopNode.result and
+   ConditionalNode.result via structuredNodeOutput->/output;
+   LoopNode.loopVariableInput; SequenceNode.executableNode;
+   ProtocolStateMachine.extendedStateMachine;
+   RedefinableTemplateSignature.classifier via template->/owner;
+   SendObjectAction.request). For these, runtime `ln.output` is empty
+   while the normative union has the value (checked by construction).
+
+On the OMG corpora the two evaluators agree everywhere (2171 union
+reads over 384 objects in DoDAFLibrary + MeasurementsLibrary), which
+also validates the generation-time flattening; the corpus contains no
+instances of the 9 redefinition-gap classes.
+
+## Honest notes
+
+- Corpus set: DoDAFLibrary + MeasurementsLibrary. UAF.xmi (P10 profile
+  file) is profile-source only: its root <uml:Profile> is not in the
+  reader's root dispatch (Model/Package only), and its stereotype
+  definitions are not gen.uml25 metaclasses - instance-level UAF load
+  is out of scope for E3 (documented, not attempted).
+- excludeCollisions: the literal OCL
+  `imps->exists(imp2 | not imp1.isDistinguishableFrom(imp2, self))`
+  quantifies over imp1 itself (rejecting everything); read as a
+  distinct-pair quantifier, which is the evident intent.
+- Imports whose target is an external href marker (no Package object)
+  are elided from get_names_of_member/imported_member (DoDAF/ML carry
+  such imports; the visible-members recursion needs a real Package).
+- The corpus instantiates no Generalizations, so the all_parents corpus
+  leg is crash/robustness only; the constructed diamond is the
+  non-vacuous leg.
+- Not attempted (need a real OCL engine or are semantics, not
+  derivations): membersAreDistinguishable (needs isDistinguishableFrom
+  over all member pairs - actually tractable but O(n^2) per namespace;
+  left as a documented elision), TemplateSignature parameter
+  conformance, ActivityNode logic.
+
+check_derived.py: 42 checks. Suites: 45 + 40 + 47 + 32 + 25 + 48 + 20
++ 42 = **299 checks**, all green.
