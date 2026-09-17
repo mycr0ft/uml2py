@@ -20,6 +20,10 @@ canonical form and report divergences. Normalizations (the "dialect table"):
     elements may be emitted before or after the model by different tools);
   - reference children (xmi:idref) are resolved to the target's canonical
     containment path, so id-renaming is invisible;
+  - multiset_features: feature localnames whose child groups compare as
+    sorted multisets instead of sequences (MOF Package.ownedMember is a
+    set - the CMOF file's member order is hand-edited and carries no
+    semantics; emission order is writer-determined).
   - drop_names_at: an optional set of xmi:ids whose <name> children are
     ignored in BOTH documents (readers may derive names for unnamed
     elements; a re-written file carries them explicitly).
@@ -60,7 +64,8 @@ def _xattr(e, name):
     return None
 
 
-def canonize(path, drop_names_at=frozenset(), drop_feats_at=None):
+def canonize(path, drop_names_at=frozenset(), drop_feats_at=None,
+             multiset_features=frozenset()):
     """Canonical form of an XML document as a nested hashable structure."""
     root = ET.parse(str(path)).getroot()
     drop_feats = {k: frozenset(v) for k, v in (drop_feats_at or {}).items()}
@@ -124,7 +129,9 @@ def canonize(path, drop_names_at=frozenset(), drop_feats_at=None):
         grouped = {}
         for f, k in kids:
             grouped.setdefault(f, []).append(k)
-        children = tuple((f, tuple(v)) for f, v in sorted(grouped.items()))
+        children = tuple(
+            (f, tuple(sorted(v, key=repr) if f in multiset_features else v))
+            for f, v in sorted(grouped.items()))
         return (( _split(e.tag)[0], _split(e.tag)[1]),
                 tuple(sorted(attrs.items())), text, children)
 
@@ -133,10 +140,11 @@ def canonize(path, drop_names_at=frozenset(), drop_feats_at=None):
     return repr(((_split(root.tag)[0], _split(root.tag)[1]), tuple(top)))
 
 
-def compare(a_path, b_path, drop_names_at=None, drop_feats_at=None):
+def compare(a_path, b_path, drop_names_at=None, drop_feats_at=None,
+            multiset_features=frozenset()):
     """Canonical-compare two XML documents; return a list of divergences."""
-    ca = canonize(a_path, drop_names_at, drop_feats_at)
-    cb = canonize(b_path, drop_names_at, drop_feats_at)
+    ca = canonize(a_path, drop_names_at, drop_feats_at, multiset_features)
+    cb = canonize(b_path, drop_names_at, drop_feats_at, multiset_features)
     if ca == cb:
         return []
     # locate the first divergence for a useful message

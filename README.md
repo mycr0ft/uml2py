@@ -17,8 +17,9 @@ stdlib, and every semantic in them is traceable to an OMG document.
 | `xmi21.py` | XMI 2.1/EMF instance reader (dialect-tolerant: unprefixed containment, EMF feature defaults, cross-file `href` markers, stereotype applications) → feeds the emitter end-to-end | `check_dodaf.py` 32 |
 | `xmi_write.py` | XMI 2.1/EMF instance writer — the read/write pair round-trips both OMG dialects (DoDAFLibrary 2.1 form and MeasurementsLibrary 2.5.1-era form) with **canonical structural parity** (`canon.py`); writes stereotype applications (both forms, tags, `_URI`/`_EXTENSIONS`-driven) and profile applications | `check_xmi_write.py` 48 |
 | `gen/bpmn.py` | BPMN 2.0.2 metamodel — OMG publishes BPMN as CMOF XMI (`BPMN20.cmof`), not a UML profile; `generate_bpmn.py` is a clean-room CMOF generator: 137 classes, 9 enums, 193 associations, opposite wiring, deliberately NOT UML Elements | `check_bpmn.py` 25 |
+| `mm_write.py` | CMOF writer — reconstructs OMG `BPMN20.cmof` from the generated metamodel with **canonical structural parity** (`canon.py`, member order as set); `_SYNTH` carries the raw serialization forms the runtime tables don't | `check_cmof_write.py` 20 |
 
-**237 checks, all green.** `REPORT.md` is the detailed build journal: dialect facts,
+**257 checks, all green.** `REPORT.md` is the detailed build journal: dialect facts,
 mapping tables with spec anchors, calibration evidence, and honest elisions.
 
 ## Quick start
@@ -53,11 +54,12 @@ gen/sysml.py           generated SysML v1 profile stereotypes
 gen/uaf.py             generated UAF 1.2 UAFML stereotypes (folds gen.sysml bases)
 generate_bpmn.py       CMOF generator (OMG BPMN20.cmof -> gen/bpmn.py)
 gen/bpmn.py            generated BPMN 2.0.2 metamodel (reuses gen.uml25 descriptors)
+mm_write.py            CMOF writer (BPMN20.cmof canonical parity, _SYNTH metadata)
 v1_to_v2.py            SysML v1 -> SysML v2 textual emitter (mapping authority: ptc/2025-04-07)
 xmi21.py               XMI 2.1/EMF instance reader -> gen.uml25 objects
 xmi_write.py            XMI 2.1/EMF instance writer (canonical parity vs OMG corpus)
 canon.py                shared canonical XML comparator (writer oracles)
-check*.py               six check suites (237 checks)
+check*.py               seven check suites (257 checks)
 calibrate_v2.py        textual-form calibration harness for sysmlpy
 REPORT.md              build journal: dialect facts, mapping tables, evidence
 PLAN.md                plan for the exporter/QoL waves (E1-E6: XMI/CMOF/EMOF writers, stereotype writing, derived unions, query helpers)

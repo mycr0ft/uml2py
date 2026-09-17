@@ -80,17 +80,25 @@ def prop_type(a):
 
 
 def parse_cmof(path):
-    """(classes, associations, warns) from the CMOF package.
+    """(classes, associations, warns, meta) from the CMOF package.
 
     classes: name -> dict(name, supers=[...], abstract=bool, attrs=[...],
     byname={}); an attr dict carries name/tkind/tname/multi/lo/hi/
-    derived/composite/assocname/default/opps/synthesized.
+    derived/composite/assocname/default/opps/synthesized plus the raw
+    serialization forms (lraw/uraw/vis/ordered/href) mirrored into _SYNTH.
     Enumerations are stored as dict(name, enum=[literals], ...).
     associations: name -> (end1, end2) raw memberEnd strings.
+    meta: package attrs, tags, hrefs (frag -> verbatim href), ends
+    (assoc-owned ownedEnd records), synth_attrs (class-side attrs the
+    generator created; absent from the file).
     """
     r = etree.parse(str(path)).getroot()
     pkg = r[0]
     classes, assocs, warns = {}, {}, []
+    hrefs = {}
+    ends_by_assoc = {}
+    tags = [(t.get("name"), t.get("value"), t.get("element"))
+            for t in r.findall("{http://schema.omg.org/spec/MOF/2.0/cmof.xml}Tag")]
 
     for om in pkg.findall("*"):
         if om.get(X_TYPE) == "cmof:Class":
@@ -100,6 +108,11 @@ def parse_cmof(path):
                      attrs=[], byname={})
             for a in om.findall("{*}ownedAttribute"):
                 tkind, tname = prop_type(a)
+                ty = a.find("*")
+                thref = ty.get("href") if ty is not None else None
+                if thref:
+                    frag = thref.split("#")[-1]
+                    hrefs[tname if tkind == "ext" else frag] = thref
                 up = a.get("upper")
                 lo = a.get("lower")
                 multi = up == "*" or (up and up.isdigit() and int(up) > 1)
@@ -111,7 +124,9 @@ def parse_cmof(path):
                     derived=a.get("isDerived") == "true",
                     composite=a.get("isComposite") == "true",
                     assocname=a.get("association"),
-                    default=a.get("default")))
+                    default=a.get("default"),
+                    lraw=lo, uraw=up, vis=a.get("visibility"),
+                    ordered=a.get("isOrdered"), href=thref))
                 c["byname"][a.get("name")] = c["attrs"][-1]
             classes[om.get("name")] = c
         elif om.get(X_TYPE) == "cmof:Enumeration":
@@ -133,7 +148,10 @@ def parse_cmof(path):
                     name=e.get("name"), type=e.get("type"),
                     lo=int(e.get("lower", 1)) if e.get("lower")
                     else (0 if e.get("upper") == "*" else 1),
-                    hi=e.get("upper") or "1"))
+                    hi=e.get("upper") or "1",
+                    lraw=e.get("lower"), uraw=e.get("upper"),
+                    vis=e.get("visibility"),
+                    derived=e.get("isDerived") == "true"))
             elif "-" in ref:
                 cls, pname = ref.split("-", 1)
                 if cls not in classes:
@@ -186,13 +204,18 @@ def parse_cmof(path):
                 warns.append(f"{aname}: class-owned end {c1}.{p1} not found")
         elif len(class_ends) == 0 and len(assoc_ends) == 2:
             pass   # both ends association-owned; carried in _ASSOCIATIONS only
+        if assoc_ends:
+            ends_by_assoc[aname] = assoc_ends
     for om in pkg.findall("*"):
         if om.get(X_TYPE) == "cmof:Association":
             assocs[om.get("name")] = tuple((om.get("memberEnd") or "").split())
-    return classes, assocs, warns
+    ends = {an: tuple(ends_by_assoc[an]) for an in ends_by_assoc}
+    meta = dict(package=dict(name=pkg.get("name"), uri=pkg.get("uri")),
+                tags=tuple(tags), hrefs=hrefs, ends=ends)
+    return classes, assocs, warns, meta
 
 
-def emit_module(classes, assocs, warns):
+def emit_module(classes, assocs, warns, meta):
     """Emit gen/bpmn.py: enums, topological C3-verified classes, tables."""
     enums = {n: c for n, c in classes.items() if "enum" in c}
     real = {n: c for n, c in classes.items() if "enum" not in c}
@@ -386,11 +409,58 @@ def emit_module(classes, assocs, warns):
                 w(f"        '{k}': {v!r},")
             w("    }")
     w("")
+    # -------------------------------------------------------------------
+    # CMOF-side serialization metadata for the writer (mm_write.py):
+    # the file's raw forms that the runtime _Ref tables do not carry
+    # (lower/upper presence, visibility, isOrdered, defaults, tags,
+    # hrefs, association-owned ends). See REPORT.md Part 11.
+    # -------------------------------------------------------------------
+    props = {}
+    synth_attrs = {}
+    for n, c in real.items():
+        for a in c["attrs"]:
+            key = f"{n}.{a['name']}"
+            if a.get("synthesized"):
+                synth_attrs[key] = a.get("assocname")
+                continue
+            props[key] = (a.get("lraw"), a.get("uraw"), a.get("vis"),
+                          a.get("ordered"), a.get("default"))
+    w("_SYNTH = {")
+    w(f'    "package": {{"name": {meta["package"]["name"]!r}, '
+      f'"uri": {meta["package"]["uri"]!r}}},')
+    w('    "tags": (')
+    for tn, tv, te in meta["tags"]:
+        w(f'        ({tn!r}, {tv!r}, {te!r}),')
+    w("    ),")
+    w('    "hrefs": {')
+    for frag, href in sorted(meta["hrefs"].items()):
+        w(f'        "{dq(frag)}": "{dq(href)}",')
+    w("    },")
+    w('    "ends": {')
+    for an in sorted(meta["ends"]):
+        for e in meta["ends"][an]:
+            w(f'        "{dq(an)}": ({e["name"]!r}, {e["type"]!r}, '
+              f'{e["lraw"]!r}, {e["uraw"]!r}, {e["vis"]!r}, '
+              f'{str(e["derived"])}),')
+    w("    },")
+    w('    "props": {')
+    for key in sorted(props):
+        t = props[key]
+        w(f'        "{dq(key)}": ({t[0]!r}, {t[1]!r}, {t[2]!r}, '
+          f'{t[3]!r}, {t[4]!r}),')
+    w("    },")
+    w('    "synth_attrs": {')
+    for key in sorted(synth_attrs):
+        w(f'        "{dq(key)}": {synth_attrs[key]!r},')
+    w("    },")
+    w("}")
+    w("")
     w("# ---------------------------------------------------------------------------")
-    w("# association table (raw CMOF memberEnd name-pairs per A_* association)")
+    w("# association table (raw CMOF memberEnd name-pairs per A_* association);")
+    w("# file order - the writer emits members in this order")
     w("# ---------------------------------------------------------------------------")
     w("_ASSOCIATIONS = {")
-    for an, (e1, e2) in sorted(assocs.items()):
+    for an, (e1, e2) in assocs.items():
         w(f'    "{dq(an)}": ("{dq(e1)}", "{dq(e2)}"),')
     w("}")
     w("")
@@ -433,8 +503,8 @@ def emit_module(classes, assocs, warns):
 
 
 def gen():
-    classes, assocs, warns = parse_cmof(CMOF)
-    warns = emit_module(classes, assocs, warns)
+    classes, assocs, warns, meta = parse_cmof(CMOF)
+    warns = emit_module(classes, assocs, warns, meta)
     stats = dict(source="OMG BPMN 2.0.2 CMOF (BPMN20.cmof)",
                  classes=len([c for c in classes.values() if "enum" not in c]),
                  enums=len([c for c in classes.values() if "enum" in c]),

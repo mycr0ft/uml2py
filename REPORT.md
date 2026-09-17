@@ -828,3 +828,100 @@ the "2.5.1-era EMF" form) vs DoDAFLibrary.xmi (UML 20090901, XMI 2.1).
 - Tag values are typed as strings in both forms; no tag exists in
   either corpus (both corpora carry none), so no enum-typed tag
   round-trip is demonstrated yet.
+
+---
+
+# Part 11: Wave E5 - CMOF writer (mm_write.py) over the BPMN 2.0.2 metamodel
+
+E5 closes the metamodel-writing half for BPMN: gen/bpmn.py (generated
+from OMG BPMN20.cmof) plus a `_SYNTH` serialization table reconstructs
+the OMG CMOF file with canonical parity.
+
+## Dialect probes (P5/P8 pinned, BPMN20.cmof)
+
+- Root `xmi:XMI` (xmi 2.1 + cmof ns); one `cmof:Package`
+  (xmi:id "_0", name="BPMN20", uri="...MODEL-XMI") + two cmof:Tag
+  elements (nsPrefix bpmn, nsURI MODEL-XMI, element="_0").
+- All 339 members flattened as `ownedMember` children (137 Class +
+  9 Enumeration + 193 Association); member order is hand-edited in the
+  file and carries no semantics (MOF ownedMember is a set) - canon
+  normalizes it as a multiset and the writer emits a deterministic
+  order (enumerations sorted, classes in dependency order,
+  associations in file order).
+- Classes: id == name; `superClass` space-separated attribute (the
+  C3-verified runtime base order equals the file's for all 137);
+  `isAbstract` only when true (17).
+- Properties (493 = 316 class-side + 177 association-owned ends):
+  primitive/DOM/external types as `<type>` children carrying verbatim
+  hrefs (String x66, Boolean x23, Integer x5, MOF Element x8,
+  BPMNDI.cmof#BPMNDiagram x1 - a RELATIVE href); class/enum types as
+  `type="<id>"` attributes (x390); id == "<owner>-<name>".
+- Multiplicity (P8): upper written when != 1; lower written when 0 -
+  except 8 class-side properties where lower is omitted with upper='*'
+  (two spellings of 0..* in the hand-produced file; both preserved
+  verbatim via _SYNTH). Ends: (0,'*') x78, default x32, ('0',) x67.
+- visibility: associations always "private" (x193); properties only
+  when "public" (x87: 61 class-side + 26 ends) - no derivable rule,
+  stored verbatim. isOrdered on exactly one property
+  (FlowNode-outgoing). `default` attribute on 27 properties
+  ('false' x12, 'true' x4, and literals including 'text/plain').
+- Association attribute: exactly the 209 class-side properties that
+  appear as class-owned memberEnd refs carry `association="A_*"`
+  (bijection verified); the 17 wired class-side navigable properties
+  do NOT (their end is association-owned in the file).
+- Ends: owningAssociation + association (both = the association id);
+  isDerived on 2; visibility public on 26.
+- Enumerations: ownedLiteral children with classifier/enumeration
+  attributes; id "<Enum>-<literal>".
+- xmi:ids: class/enum/association id == name; property/ends/literals
+  "<owner>-<name>"; canon ignores ids, but memberEnd/type/element
+  attribute values are compared verbatim and reproduce.
+
+## Changes
+
+- `generate_bpmn.py`: the parse keeps raw serialization forms (lower/
+  upper strings, visibility, isOrdered, verbatim hrefs, Package
+  attrs, Tags, association-owned end records) and `emit_module` writes
+  a `_SYNTH` table into gen/bpmn.py: package, tags, hrefs, ends (177),
+  props (316: raw lower/upper/vis/ordered/default per class-side
+  property), synth_attrs (155 generator-created back-refs, absent from
+  the file). _ASSOCIATIONS now emits in file order (the writer's
+  member order; deterministic and parse-order preserving).
+  Output idempotent; check_bpmn.py green unchanged.
+- `mm_write.py` (new): `write_cmof(module)` reconstructs the CMOF
+  package from the runtime tables + _SYNTH: classes (superClass from
+  the C3-verified bases, own _DECL attrs in declaration order,
+  synthesized back-refs skipped), enumerations (literals with
+  classifier/enumeration), associations (memberEnd verbatim, ownedEnd
+  from ends), tags; types by tkind (href child vs type attribute).
+- `canon.py`: `multiset_features` parameter - feature groups compared
+  as sorted multisets (MOF Package.ownedMember is a set).
+
+## Result
+
+- **Canonical parity**: canon(BPMN20.cmof, written) empty with
+  ownedMember normalized as a multiset. Writer deterministic.
+- **Structural round-trip**: re-parsing the written file with the
+  generator's parse reproduces identical classes, associations and
+  metadata (no warnings); the file's hand-edited member order is the
+  only normalization.
+- check_cmof_write.py: 20 checks. Suites: 45 + 40 + 47 + 32 + 25 + 48
+  + 20 = **257 checks**, all green; regression suites unchanged.
+
+## Honest notes
+
+- _SYNTH grew beyond the plan's original sketch ("association-owned
+  ends recovered from synthesized flags"): the file's hand-edited
+  member order, two 0..* spellings, public-visibility islands, one
+  isOrdered property and 27 default attributes are not derivable from
+  the runtime _Ref tables, so the table carries the raw forms
+  (316 props + 177 ends + 155 synth markers + package/tags/hrefs).
+  The generated module change is listed, idempotent, and
+  check_bpmn.py stays green.
+- ownedMember order normalization is semantic (set), not convenience:
+  the CMOF file's order is hand-edited with no MOF meaning.
+- Byte parity for BPMN20.cmof is not pursued (stretch goal per plan;
+  the file is hand-edited and canon is the gate).
+- The writer derives association/owningAssociation on ends, literal
+  classifier/enumeration, and end ids "<assoc>-<name>" by convention;
+  all verified against the file.
