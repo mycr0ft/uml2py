@@ -1277,3 +1277,77 @@ checks**, all green. The exporter plan (E1-E6) is complete.
   names (88 + scattered occurrences in APE); a metaclass ID→name map
   will be needed for full coverage.
 - Encrypted projects are out of scope by design.
+
+# Part 17: mdzip_import.py - .mdzip -> gen.uml25 objects
+
+## Architecture
+
+- mdzip.py stays the scrape/forensics layer; mdzip_import.py consumes it
+  and delegates to xmi21.read_xmi21 unchanged (one engine, two dialect
+  front-ends).  The importer is a *normalization* pass:
+  merged document -> retagged spellings -> injected/coerced types ->
+  scrubbed refs -> reader.
+
+## Dialect facts pinned (all found empirically over the corpus)
+
+- **Delta snapshots**: members repeat xmi:ids across snapshots (APE: 811
+  duplicated ids across 18 members; SAF_FFDS: 1707).  Keep-LAST is the
+  correct semantics (later snapshots are the more-current form);
+  keep-first loses updated subtrees and was the main object-count killer
+  (180 -> 422 objects on APE after the flip).
+- **Attribute spellings, two generations apart**:
+  `xmi:id/idref/uuid/version` under `http://www.omg.org/XMI` (XMI 2.0)
+  must be retagged to `http://www.omg.org/spec/XMI/20131001`; element
+  typing is `xsi:type` (XML-Schema spelling) and must become `xmi:type`.
+  Both retags are pure attribute rewrites.
+- **Mixed tagging styles in one file**: top-level elements are
+  type-tagged (`<uml:Package xmi:id=.../>` under xmi:XMI) while nested
+  containment children are feature-tagged (`<packagedElement .../>`),
+  and BOTH styles omit xmi:type on the root elements.  Member Package/
+  Model roots go under the merged xmi:XMI directly (reader dispatches
+  them); other top-level elements (uml:Profile) go under a synthetic
+  holding_bin package.
+- **Type inference without an ID map**: the raw metamodel IDs
+  (`_9_0_2_91a0295_…`) resolve structurally -- rule 1 (parent-feature):
+  the parent feature descriptor in gen.uml25 names the metaclass; rule 2
+  (property-signature): MD's tag definitions have a fixed property shape.
+  585 coercions on APE, 3 left over.  The speculative ID table from
+  Part 16 is unnecessary -- the metamodel itself is the map.
+- **Reference forms**: in-document `href="#id"` == xmi:idref (rewritten);
+  dangling `#id` -> synthetic external marker; cross-project
+  `local:/PROJECT-x?resource=...` and bare `PROJECT-x?resource=...` ->
+  synthetic external markers (usages recorded separately); NAME-TYPED
+  reference attributes (`type="uml:Property"` as a value, 458 on APE) ->
+  synthetic `names#` markers (resolution = wave-2); idrefs to
+  non-constructible profile-layer elements (Profile/Stereotype/
+  Extension/tag metaclasses) -> synthetic `profile-layer#` markers.
+  Nothing raises on the wave-2 boundary; everything is recorded.
+- **xmi21.py table extensions** (spec-standard features the DoDAF corpus
+  never exercised): COMPOSITE += slot/generalization/ownedRule;
+  REF_SINGLE += owningPackage; CONSTRUCTIBLE += PrimitiveType,
+  AssociationClass.  check_dodaf.py 32/32 still green after the change.
+
+## Result (12-file stress set, 2015-era .. 2024x-era)
+
+- APE 422 objects (244 Class, 80 DataType, 64 Package, 15
+  InstanceSpecification), 18 roots, 585 coercions, 811 dedups, 16 usages.
+- SAF_FFDS 223 objects incl. AssociationClass; MPS 16; maas 8;
+  INGRID Nerdman 11; NIEM.Guide 17; AML 23; DELS 40.  **12/12 import
+  without error**, 0 corpus files needed hand-holding.
+- check_mdzip_import.py: 18 checks (counts, dedup semantics, provenance
+  carry-through, wave-2 recording, name sanity).
+- Suites: 45 + 60 + 47 + 32 + 28 + 18 + 25 + 48 + 20 + 42 + 19 + 18 =
+  **402 checks**, all green.
+
+## Honest notes
+
+- Coverage is *construction* coverage: named Classes/Packages/DataTypes
+  come through with names and composition trees; feature coverage inside
+  objects is partial (260 unmapped_features on APE, dominated by the
+  profile layer: taggedValue 140, appliedStereotype 122).
+- Name-typed references are recorded, not resolved (`names#` markers):
+  458 on APE.  Resolving them against the merged model's named elements
+  is the next increment, along with the profile layer itself.
+- `Model` count includes synthetic roots; the reader's derived-name
+  provenance record applies to unnamed elements only.
+- Encrypted projects: MdZipImportError, by design.

@@ -47,12 +47,13 @@ XMI_NS = "{http://schema.omg.org/spec/XMI/2.1}"
 COMPOSITE = {"packagedElement", "nestedClassifier", "ownedAttribute",
              "ownedLiteral", "ownedEnd", "ownedComment", "ownedConnector",
              "ownedParameter", "ownedOperation", "ownedMember", "region",
-             "subvertex", "transition", "packageImport"}
+             "subvertex", "transition", "packageImport", "slot",
+             "generalization", "ownedRule"}
 # single-value string features
 STRING = {"name", "body", "visibility", "language", "URI"}
 # single reference features
 REF_SINGLE = {"type", "association", "general", "classifier",
-              "specification", "importedPackage"}
+              "specification", "importedPackage", "owningPackage"}
 # multi reference features (may arrive before their targets)
 REF_MULTI = {"memberEnd", "annotatedElement", "client", "supplier"}
 # multiplicity literal features
@@ -60,8 +61,9 @@ LITERAL = {"lowerValue", "upperValue", "defaultValue"}
 
 # metaclass names constructible in gen.uml25 (instances, not abstract)
 CONSTRUCTIBLE = {"Model", "Package", "Class", "DataType", "Enumeration",
-                 "Association", "Property", "Port", "Comment",
-                 "EnumerationLiteral", "LiteralInteger",
+                 "PrimitiveType", "Association", "AssociationClass",
+                 "Property", "Port",
+                 "Comment", "EnumerationLiteral", "LiteralInteger",
                  "LiteralUnlimitedNatural", "LiteralString", "Operation",
                  "OpaqueExpression", "Connector", "ConnectorEnd",
                  "Generalization", "InstanceSpecification", "Slot",

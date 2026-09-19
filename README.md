@@ -16,13 +16,14 @@ stdlib, and every semantic in them is traceable to an OMG document.
 | `v1_to_v2.py` | Clean-room SysML v1 → v2 **textual-notation emitter** anchored to OMG *SysML v2.0 Beta 4, Part 2: SysML v1 to SysML v2 Transformation* (ptc/2025-04-07). Every emitted form is calibrated against sysmlpy; anything without a normative mapping **raises `UnmappedFeature` instead of guessing** | `check_v1_to_v2.py` 47 |
 | `xmi21.py` | XMI 2.1/EMF instance reader (dialect-tolerant: unprefixed containment, EMF feature defaults, cross-file `href` markers, stereotype applications) → feeds the emitter end-to-end | `check_dodaf.py` 32 |
 | `mdzip.py` | MagicDraw/Cameo `.mdzip` scrape + forensics: member inventory, model-snapshot extraction with Nomagic→OMG namespace aliasing, proxy/project-usages (`local:/PROJECT-…` dependencies), version-era fingerprints (ID prefixes like `_2021x_2_…`), and hex/base64 payload extraction (SVG/PNG/JPEG/ZIP) with a manifest | `check_mdzip.py` 28 |
+| `mdzip_import.py` | `.mdzip` → `gen.uml25` objects: merges delta-snapshot members (keep-last dedup), retags Nomagic's XMI-2.0/xsi spellings to the reader's dialect, injects `xmi:type` from tags/features and coerces raw-ID types (metamodel-as-map + property signature), scrubs cross-project/name-typed/profile-layer refs into synthetic external markers, and delegates to `read_xmi21` — provenance (usages, eras) travels with the model | `check_mdzip_import.py` 18 |
 | `xmi_write.py` | XMI 2.1/EMF instance writer — the read/write pair round-trips both OMG dialects (DoDAFLibrary 2.1 form and MeasurementsLibrary 2.5.1-era form) with **canonical structural parity** (`canon.py`); writes stereotype applications (both forms, tags, `_URI`/`_EXTENSIONS`-driven) and profile applications | `check_xmi_write.py` 48 |
 | `gen/bpmn.py` | BPMN 2.0.2 metamodel — OMG publishes BPMN as CMOF XMI (`BPMN20.cmof`), not a UML profile; `generate_bpmn.py` is a clean-room CMOF generator: 137 classes, 9 enums, 193 associations, opposite wiring, deliberately NOT UML Elements | `check_bpmn.py` 25 |
 | `mm_write.py` | CMOF writer — reconstructs OMG `BPMN20.cmof` from the generated metamodel with **canonical structural parity** (`canon.py`, member order as set); `_SYNTH` carries the raw serialization forms the runtime tables don't. `write_emof` adds the EMOF dialect (MOF 2.0/XMI §6.5.2 rules: derived and defaults not serialized, no Associations) | `check_cmof_write.py` 20, `check_emof_write.py` 18 |
 | `derived.py` | UML 2.5.1 normative derivations over `gen.uml25` objects (spec OCL anchors): ownership chains, qualified names (template-aware), generalization closures, normative member (inherited/imported), redefinition-aware derived-union evaluation | `check_derived.py` 42 |
 | `query.py` | Query helpers over loaded instance graphs: deterministic containment walk, `find` (metaclass by class or name, stereotype labels, qualified names, predicates), `stereotypes` label resolution | `check_query.py` 19 |
 
-**384 checks, all green.** `REPORT.md` is the detailed build journal: dialect facts,
+**402 checks, all green.** `REPORT.md` is the detailed build journal: dialect facts,
 mapping tables with spec anchors, calibration evidence, and honest elisions.
 
 ## Quick start
@@ -65,7 +66,7 @@ v1_to_v2.py            SysML v1 -> SysML v2 textual emitter (mapping authority: 
 xmi21.py               XMI 2.1/EMF instance reader -> gen.uml25 objects
 xmi_write.py            XMI 2.1/EMF instance writer (canonical parity vs OMG corpus)
 canon.py                shared canonical XML comparator (writer oracles)
-check*.py               eleven check suites (384 checks; mdzip suite needs MDZIP_CORPUS)
+check*.py               twelve check suites (402 checks; mdzip suites need MDZIP_CORPUS)
 calibrate_v2.py        textual-form calibration harness for sysmlpy
 REPORT.md              build journal: dialect facts, mapping tables, evidence
 PLAN.md                plan for the exporter/QoL waves (E1-E6: XMI/CMOF/EMOF writers, stereotype writing, derived unions, query helpers)
