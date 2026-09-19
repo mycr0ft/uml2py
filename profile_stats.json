@@ -46,6 +46,35 @@
         "WholeLifeConfigurationKind"
       ],
       "lines": 3752
+    },
+    {
+      "profile": "UAF",
+      "module": "gen/uaf13.py",
+      "stereotypes": 272,
+      "enums": [
+        "ActualMeasurementKind",
+        "ActualMilestoneKind",
+        "CapabilityKind",
+        "ChallengeKind",
+        "DriverKind",
+        "EnvironmentKind",
+        "GeoPoliticalExtentTypeKind",
+        "InformationKind",
+        "InformationModelKind",
+        "LocationKind",
+        "LocationTypeKind",
+        "MissionKind",
+        "OperationalExchangeKind",
+        "ProjectKind",
+        "ResourceExchangeKind",
+        "ResponsibleRoleKind",
+        "RoleKind",
+        "RuleKind",
+        "ServiceExchangeKind",
+        "ValueItemKind",
+        "WholeLifeConfigurationKind"
+      ],
+      "lines": 3946
     }
   ],
   "warnings": [

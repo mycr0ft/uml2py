@@ -1139,3 +1139,70 @@ corrected here).
 
 Suites: 45 + 40 + 47 + 32 + 25 + 48 + 20 + 42 + 19 + 18 = **336
 checks**, all green. The exporter plan (E1-E6) is complete.
+
+# Part 15: UAF 1.3 profile (gen/uaf13.py) over OMG UAF13.xml
+
+## Provenance
+
+- UAF 1.3 formally adopted by OMG April 2026 (formal/25-10-01 DMM,
+  formal/25-10-03 UAFML); normative machine-readable files dtc/24-11-06
+  (`UAF.xml`) and dtc/24-11-07 (`MeasurementsLibrary.xml`), downloaded from
+  omg.org/spec/UAF/20241101/ to `/mnt/TBFox/uml_xmi/UAF13.xml`
+  (+ `MeasurementsLibrary13.xml`).
+
+## Delta vs the 1.2 profile (UAF.xmi, dtc/22-12-01 era)
+
+- +17 Mission-domain stereotypes: Mission, ActualMission,
+  ActualMissionPhase, ActualMissionScenario, ActualMissionVignette,
+  MissionEngineeringThread, MissionScenario, MissionTask, MissionTaskAction,
+  MissionThread, MissionVignette, Doctrine, OpposableElement, Opposes,
+  ConflictsWith, Defines, DesignationKind; -EnterpriseMission (no 1.2
+  stereotype generalized it). Zero base-fold changes on shared stereotypes.
+- 256 -> 272 stereotypes, 20 -> 21 enums (MissionKind new), 379 -> 402
+  generalizations, 259 -> 269 constraints, 112 -> 118 non-base properties.
+- New folds exercised: Mission(StrategicPhase, U.Class),
+  ActualMission(U.InstanceSpecification), MissionThread(OperationalActivity,
+  U.Activity), Doctrine(Standard, sysml.Requirement via href),
+  ConflictsWith(sysml.Problem), Defines(sysml.Allocate),
+  DesignationKind(sysml.ValueType), OpposableElement abstract over
+  UAFElement with the `designation` tag.
+
+## Dialect probes (1.3 vs 1.2)
+
+- Same UML-XMI envelope dialect as 1.2 (xmi 20131001 / uml 20161101 /
+  sysml 20181001 namespaces, xmi:id refs, href generalizations); the `cmof`
+  namespace is declared but unused.
+- Profile URI moves to `http://www.omg.org/spec/UAF/20241101/UAF`
+  (1.2: `https://www.omg.org/spec/UAF/20211201/UAF`). Both files carry the
+  profile *name* "UAF", so the emitted module is overridden to
+  `gen/uaf13.py` via a PROFILES name override; the URI carries version
+  identity.
+- **NEW href form**: tagged values typed by SysML library datatypes, e.g.
+  `SysML.xmi#SysML_dataType.String` (Capability.customKind,
+  ValueItem.customKind, MotivationalElement.ID/Text,
+  ResourcePerformer.isStandardConfiguration, OperationalExchange.trustLevel).
+  The 1.2-era href parser read any dotted SysML fragment as a stereotype
+  reference; `resolve_prop_type` now maps `SysML_dataType.<Prim>` to a
+  primitive. The form does not occur in UAF.xmi, so regenerating 1.2 stays
+  byte-identical (verified by `git diff`).
+
+## Changes
+
+- `generate_profiles.py`: PROFILES entries became (path, module-override)
+  tuples; `emit_module` honors the override; SysML_dataType primitive hrefs.
+- `gen/uaf13.py`: 272 stereotypes, 21 enums, 3,946 lines.
+- `check_profiles.py`: +20 pinned checks (60 total).
+
+## Result
+
+- check_profiles.py: 60/60.
+- Suites: 45 + 60 + 47 + 32 + 25 + 48 + 20 + 42 + 19 + 18 = **356
+  checks**, all green.
+
+## Honest notes
+
+- `MeasurementsLibrary13.xml` is downloaded but not yet exercised; the
+  XMI-writer parity corpus (check_xmi_write.py) still uses the 1.2-era
+  MeasurementsLibrary.xmi. 1.3 stereotype *applications* writing is
+  untested until an instance model in the 1.3 dialect is run through
+  xmi_write.

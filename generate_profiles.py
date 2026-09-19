@@ -28,9 +28,14 @@ sys.path.insert(0, str(HERE))
 from gen import uml25 as U  # noqa: E402
 
 PROFILES = [
-    Path("/mnt/TBFox/surfacebackup_512GB/uml_xmi/StandardProfile.xmi"),
-    Path("/mnt/TBFox/surfacebackup_512GB/uml_xmi/sysml.xmi"),
-    Path("/mnt/TBFox/uml_xmi/UAF.xmi"),   # OMG UAF 1.2 UAFML profile
+    (Path("/mnt/TBFox/surfacebackup_512GB/uml_xmi/StandardProfile.xmi"), None),
+    (Path("/mnt/TBFox/surfacebackup_512GB/uml_xmi/sysml.xmi"), None),
+    (Path("/mnt/TBFox/uml_xmi/UAF.xmi"), None),        # OMG UAF 1.2 UAFML profile
+    # OMG UAF 1.3 (formal/25-10-03 era; dtc/24-11-06 machine-readable).  Same
+    # profile name "UAF" as 1.2, so the module name is overridden to uaf13;
+    # the profile URI (http://www.omg.org/spec/UAF/20241101/UAF) carries the
+    # version identity in the emitted module.
+    (Path("/mnt/TBFox/uml_xmi/UAF13.xml"), "uaf13"),
 ]
 
 PRIMITIVES = {"Boolean": "bool", "Integer": "int", "Real": "float",
@@ -161,6 +166,9 @@ def resolve_prop_type(el, idmap):
             if "Libraries" in frag:       # SysML library primitive, e.g. String
                 mm = re.search(r"-([A-Za-z]+)_PackageableElement$", frag)
                 return (mm.group(1) if mm else frag), "prim"
+            dt = re.match(r"SysML_dataType\.(\w+)$", frag)   # UAF 1.3: tagged values
+            if dt and dt.group(1) in PRIMITIVES:             # typed-by SysML library
+                return dt.group(1), "prim"                   # datatypes (not stereotypes)
             if "." in frag:               # e.g. #SysML.Block
                 return frag.split(".", 1)[1], "extstereo"
             return frag, "extstereo"
@@ -358,6 +366,8 @@ def emit_module(d, metaclasses, warns):
     st = d["stereotypes"]
     mod_name = {"StandardProfile": "standard_profile", "SysML": "sysml",
                 "UAF": "uaf"}[d["profile"]]
+    if d.get("_mod_override"):
+        mod_name = d["_mod_override"]
     import gen.sysml as _sysml
     from itertools import permutations
     created = {}
@@ -558,7 +568,11 @@ def emit_module(d, metaclasses, warns):
 
 
 def gen():
-    all_data = [parse_profile(p) for p in PROFILES]
+    all_data = []
+    for p, mod_override in PROFILES:
+        d = parse_profile(p)
+        d["_mod_override"] = mod_override
+        all_data.append(d)
     uml_src = UML.read_text()
     metaclasses = set(re.findall(r"^class (\w+)\(", uml_src, re.M))
     warns = [wm for d in all_data for wm in d["warns"]]

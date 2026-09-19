@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Checks for the generated profile modules (StandardProfile + SysML v1 + UAF 1.2)."""
+"""Checks for the generated profile modules (StandardProfile + SysML v1 + UAF 1.2 + UAF 1.3)."""
 import sys
 from pathlib import Path
 
@@ -8,6 +8,7 @@ import gen.uml25 as U  # noqa: E402
 import gen.standard_profile as SP  # noqa: E402
 import gen.sysml as S  # noqa: E402
 import gen.uaf as F  # noqa: E402
+import gen.uaf13 as F13  # noqa: E402
 
 PASS, FAIL = [], []
 
@@ -127,6 +128,52 @@ check("Viewpoint instantiable with tag roundtrip",
 check("generator produced no unresolved targets",
       not any("unresolved" in w for w in
               __import__("json").load(open("profile_stats.json"))["warnings"]))
+
+print("== UAF 1.3 (UAFML, from OMG UAF13.xml, dtc/24-11-06; gen/uaf13.py) ==")
+check("272 UAF 1.3 stereotypes", len(F13._STEREOTYPES) == 272)
+check("profile URI is the 1.3 namespace",
+      F13._URI == "http://www.omg.org/spec/UAF/20241101/UAF")
+check("21 UAF 1.3 enumerations",
+      sum(1 for n in dir(F13) if isinstance(getattr(F13, n), type)
+          and issubclass(getattr(F13, n), __import__("enum").Enum)) == 21)
+check("Mission folds StrategicPhase + U.Class",
+      any(k.__name__ == "StrategicPhase" for k in F13.Mission.__mro__)
+      and issubclass(F13.Mission, U.Class))
+check("Mission.kind driven by new MissionKind enum",
+      F13.Mission._DECL["kind"].t is F13.MissionKind)
+check("ActualMission folds InstanceSpecification",
+      issubclass(F13.ActualMission, U.InstanceSpecification))
+check("MissionThread folds OperationalActivity + U.Activity",
+      any(k.__name__ == "OperationalActivity" for k in F13.MissionThread.__mro__)
+      and issubclass(F13.MissionThread, U.Activity))
+check("MissionTask extends MissionThread", issubclass(F13.MissionTask, F13.MissionThread))
+check("OpposableElement abstract, folds U.Element, designation tag",
+      F13.OpposableElement._ABSTRACT and issubclass(F13.OpposableElement, U.Element)
+      and "designation" in F13.OpposableElement._DECL)
+check("Doctrine folds Standard + sysml.Requirement (cross-profile href)",
+      any(k.__name__ == "Standard" for k in F13.Doctrine.__mro__)
+      and S.Requirement in F13.Doctrine.__mro__)
+check("ConflictsWith folds sysml.Problem", S.Problem in F13.ConflictsWith.__mro__)
+check("Defines folds sysml.Allocate", S.Allocate in F13.Defines.__mro__)
+check("DesignationKind folds sysml.ValueType", S.ValueType in F13.DesignationKind.__mro__)
+check("1.2 EnterpriseMission absent in 1.3", not hasattr(F13, "EnterpriseMission"))
+n_cons13 = sum(len(c.CONSTRAINTS) for c in F13._STEREOTYPES
+               if "CONSTRAINTS" in c.__dict__)
+check("269 UAF 1.3 OCL constraints carried", n_cons13 == 269, f"{n_cons13}")
+check("45 abstract stereotypes flagged",
+      sum(1 for c in F13._STEREOTYPES if c._ABSTRACT) == 45)
+check("268 extension entries after dedup", len(F13._EXTENSIONS) == 268)
+check("SysML_dataType hrefs are primitives, not stereotype refs",
+      F13.Capability._DECL["customKind"].t is str)
+str_typed13 = [r.t for c in F13._STEREOTYPES
+               for r in c.__dict__.get("_DECL", {}).values()
+               if isinstance(r.t, str)]
+check("59 stereotype-typed tags, all resolving to uaf13/sysml classes",
+      len(str_typed13) == 59
+      and all((t.startswith("sysml.") and hasattr(S, t[6:])) or hasattr(F13, t)
+              for t in str_typed13), f"{len(str_typed13)}")
+check("no cross-version shadowing (Viewpoint)",
+      F13.Viewpoint is not F.Viewpoint and F13.Viewpoint._STEREO.startswith("UAF"))
 
 print("== profile constraints carried ==")
 n_cons = sum(len(c.CONSTRAINTS) for c in S._STEREOTYPES
