@@ -86,7 +86,7 @@ def cmd_sweep(args):
     from mdzip import MdZip, HEX_RUN, sniff_bytes
     corpus = Path(args.corpus)
     rows, errors = [], []
-    files = sorted(corpus.rglob('*.mdzip'))
+    files = sorted(f for f in corpus.rglob('*.mdzip') if f.is_file())
     for i, p in enumerate(files):
         rel = str(p.relative_to(corpus))
         try:
