@@ -1206,3 +1206,74 @@ checks**, all green. The exporter plan (E1-E6) is complete.
   MeasurementsLibrary.xmi. 1.3 stereotype *applications* writing is
   untested until an instance model in the 1.3 dialect is run through
   xmi_write.
+
+# Part 16: mdzip.py - MagicDraw/Cameo project scrape + forensics
+
+## Motivation
+
+- GT work exposes a large corpus of .mdzip files; Cameo's own import scales
+  poorly and discards provenance (which tool version produced the file,
+  which projects the file uses). A from-scratch scrape can do better:
+  pull the model out, fingerprint the version era, list the usages.
+
+## Format findings (pinned by check_mdzip.py over the public corpus)
+
+- A .mdzip is a plain ZIP. In every corpus file examined (2015-era
+  MagicDraw through 2024x-era Cameo) **every member is XML text**:
+  the `BINARY-<uuid>` members are diagram *presentation* XML
+  (`mdOwnedViews`/`mdElement`, geometry + symbol styles), not Java
+  serialization. Model data and presentation are cleanly separated.
+- The model lives in one or more
+  `proxy.local__PROJECT$…_resource_com$dnomagic$dmagicdraw$duml_umodel$…$dsnapshot`
+  members: XMI 2.0 (`http://www.omg.org/XMI`), standard UML property
+  names, under Nomagic's namespace
+  `http://www.nomagic.com/magicdraw/UML/2.5` (2015-era) or
+  `.../2.5.1.1` (2024-era). `alias_nomagic()` rewrites the declaration
+  to the OMG `20161101` namespace so standard XMI tooling can consume it.
+- Proxies/usages: `com.nomagic.ci.persistence.local.proxy.privatedependencylist`
+  carries `originalResourceURI="local:/PROJECT-<id>?resource=…"`;
+  `PROJECT-<id>` marker members exist for used projects. IDs appear
+  both dashed (`b79be608-559e-430b-…`) and undashed 30-32-hex.
+- Version fingerprints: element IDs embed the tool-era prefix —
+  `_9_0_…` (MD 9.0), `_12_0_…`, `_16_8beta_…`, `_2021x_2_…` (Cameo
+  2021x), `_2022x_…` — plus optional text hints in project options.
+  A single file is a *stratigraphic record*: APE carries 9.0-through-2022x
+  ID eras at once (the profile libraries predate the model content).
+- Options blobs are base64-encoded ZIPs inside `optionsString`
+  attributes (project + personal options); decoded and sniffed by
+  extract_images.
+- Hex-encoded SVG payloads (observed in GT corpus files) are handled by
+  the same generic scan: any hex/base64 run ≥ threshold is decoded and
+  magic-sniffed (svg/png/jpg/gif/gz/zip). The public corpus carries no
+  hex-SVG, so the extractor's correctness there rests on the generic
+  scan + the pinned base64-ZIP cases.
+
+## Changes
+
+- `mdzip.py`: MdZip (inventory / model_members / alias_nomagic /
+  iter_model_elements / proxies / usages / project_description /
+  version_clues / extract_images / info) + CLI
+  (`members|info|usages|versions|images <outdir>`). std-lib only.
+- `scripts/fetch_mdzip_corpus.sh`: provenance + re-download
+  (Open-MBEE APE, Galois MPS, maas-warehouse). Corpus files are NOT
+  committed; check_mdzip.py skips cleanly without them (MDZIP_CORPUS).
+- `check_mdzip.py`: 28 checks pinned to corpus facts (member kinds,
+  namespaces, APE element counts 4715/689/434/318/208, MPS 3 usages,
+  ID-era fingerprints, base64-ZIP decode, manifest schema).
+
+## Result
+
+- check_mdzip.py: 28/28 (with corpus in /tmp/mdzip_probe).
+- Suites: 45 + 60 + 47 + 32 + 28 + 25 + 48 + 20 + 42 + 19 + 18 = **384
+  checks**, all green.
+
+## Honest notes
+
+- The importer proper (aliased model members → xmi21.py → gen.uml25
+  objects) is the next increment; mdzip.py is the scrape/forensics
+  layer it will consume.
+- `iter_model_elements` types some elements by raw MagicDraw
+  metamodel IDs (`_9_0_2_91a0295_…` as xmi:type) rather than `uml:X`
+  names (88 + scattered occurrences in APE); a metaclass ID→name map
+  will be needed for full coverage.
+- Encrypted projects are out of scope by design.
