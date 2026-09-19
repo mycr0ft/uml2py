@@ -62,8 +62,9 @@ LITERAL = {"lowerValue", "upperValue", "defaultValue"}
 # metaclass names constructible in gen.uml25 (instances, not abstract)
 CONSTRUCTIBLE = {"Model", "Package", "Class", "DataType", "Enumeration",
                  "PrimitiveType", "Association", "AssociationClass",
-                 "Property", "Port",
-                 "Comment", "EnumerationLiteral", "LiteralInteger",
+                 "Property", "Port", "Profile", "Stereotype", "Extension",
+                 "ExtensionEnd", "Comment", "EnumerationLiteral",
+                 "LiteralInteger",
                  "LiteralUnlimitedNatural", "LiteralString", "Operation",
                  "OpaqueExpression", "Connector", "ConnectorEnd",
                  "Generalization", "InstanceSpecification", "Slot",

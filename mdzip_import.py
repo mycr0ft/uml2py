@@ -84,6 +84,12 @@ class MdZipImport:
         self.dangling_internal = []  # '#id' refs to nothing, made synthetic
         self.name_refs = []          # name-typed refs (type="uml:Property")
         self.raw_unresolved = []     # (xmi:id, raw_type) left for wave-2
+        self.profiles = []           # profile-layer extraction (see below)
+        self.stereotypes = {}        # stereo xmi:id -> info dict
+        self.applications = {}       # base xmi:id -> [app dicts]
+        self.tag_definitions = {}    # tagdef xmi:id -> info dict
+        self.tag_values = {}         # app xmi:id -> {tag name: string value}
+        self.profile_layer_stats = {}
         self.skipped_stray = 0
 
     def stats(self):
@@ -240,6 +246,190 @@ def _coerce_types(root, imp, report):
                 imp.coercions.append((eid, t, "Property", "property-signature"))
                 continue
             imp.raw_unresolved.append((eid, t))
+
+
+def _extract_profile_layer(root, imp):
+    """Profiles, stereotypes, tag definitions, applications, tag values.
+
+    Nomagic serializes the profile layer with tool-specific forms on top
+    of UML 2.5.1:
+      - profiles/stereotypes/extensions are standard uml:X elements and
+        are CONSTRUCTED by the reader (CONSTRUCTIBLE gained Profile,
+        Stereotype, Extension, ExtensionEnd);
+      - tagged values are Nomagic metaclasses (uml:StringTaggedValue,
+        uml:BooleanTaggedValue, uml:ElementTaggedValue, ...) whose id
+        encodes the application linkage:  <application-id> 'application_'
+        <tagDefinition-id>; the tag definition href points at the defining
+        Property (inside the Stereotype's ownedAttribute);
+      - stereotype applications are <appliedStereotype href="#stereo-id"/>
+        children on the applied element (and unprefixed attributes).
+    This pass harvests all of it into the imp.* maps and REMOVES the
+    Nomagic tagged-value elements and the appliedStereotype links from
+    the tree (the reader has neither metaclass); the harvest is the
+    importer's record, the reader never sees the tool forms.
+    """
+    tagdefs = {}          # tagdef id -> {"id","name","stereo"}
+    PARENTS = {id(c): p for p in root.iter() for c in p}
+    tv_seen = 0
+    as_seen = 0
+    for parent in list(root.iter()):
+        for el in list(parent):
+            ln = _local(el.tag)
+            if ln == "taggedValue":
+                t = _xmi_attr(el, "type") or ""
+                eid = _xmi_attr(el, "id") or ""
+                app_id, _, tagdef_id = eid.partition("application_")
+                td_id = None
+                val = None
+                for c in el:
+                    cln = _local(c.tag)
+                    if cln == "tagDefinition":
+                        href = c.get("href") or ""
+                        td_id = href.split("#")[-1] if href else None
+                        if td_id and td_id not in tagdefs:
+                            tagdefs[td_id] = {"id": td_id, "name": None,
+                                              "owner_stereo": None}
+                    elif cln == "value":
+                        kids = list(c)
+                        if kids:
+                            parts = [(v.text or "").strip() for v in kids
+                                     if v.text and v.text.strip()]
+                            val = "\n".join(parts) if parts else None
+                            if val is None and t.endswith("ElementTaggedValue"):
+                                ref = next((v2.get("href") or v2.get(
+                                    XMI25_PREFIX + "idref"))
+                                    for v2 in kids if v2.get("href")
+                                    or v2.get(XMI25_PREFIX + "idref"))
+                                val = ("__ref__" + ref.split("#")[-1]) if ref else None
+                        elif c.text and c.text.strip():
+                            val = c.text.strip()
+                if app_id and tagdef_id:
+                    imp.applications.setdefault(app_id, {"stereo": None,
+                                                         "tags": {}})
+                    key = (tagdefs.get(tagdef_id) or {}).get("name") or tagdef_id
+                    imp.tag_values.setdefault(app_id, {})[key] = val
+                    tv_seen += 1
+                parent.remove(el)     # no ElementTaggedValue in gen.uml25
+            elif ln == "appliedStereotype":
+                href = el.get("href") or ""
+                sid = href.split("#")[-1]
+                base_id = _xmi_attr(parent, "id")
+                if href and base_id:
+                    imp.applications.setdefault(
+                        base_id, {"stereo": None, "tags": {}})["stereo"] = sid
+                    imp.stereotypes.setdefault(
+                        sid, {"id": sid, "name": None, "profile": None})
+                    as_seen += 1
+                parent.remove(el)     # harvested; the reader has no such feature
+            else:
+                # unprefixed appliedStereotype="#sid" attribute form
+                for k, v in list(el.attrib.items()):
+                    if _local(k) == "appliedStereotype":
+                        sid = v.split("#")[-1]
+                        base_id = _xmi_attr(el, "id")
+                        if v and base_id:
+                            imp.applications.setdefault(
+                                base_id, {"stereo": None,
+                                          "tags": {}})["stereo"] = sid
+                            imp.stereotypes.setdefault(
+                                sid, {"id": sid, "name": None,
+                                      "profile": None})
+                            as_seen += 1
+                            del el.attrib[k]
+    # third pass: stereotype and tag-definition NAMES from their elements
+    for el in root.iter():
+        t = _xmi_attr(el, "type") or ""
+        if not t.startswith("uml:"):
+            continue
+        name = t.split(":")[-1]
+        eid = _xmi_attr(el, "id")
+        if not eid:
+            continue
+        if name == "Stereotype":
+            info = imp.stereotypes.setdefault(eid, {"id": eid, "name": None,
+                                                    "profile": None})
+            info["name"] = el.get("name")
+            # owning profile: nearest ancestor (or owningPackage href) that
+            # is a Profile; record what we can see
+            if info.get("profile") is None:
+                anc = el
+                # cET has no parent pointers; use the precomputed map
+                anc = PARENTS.get(id(el))
+                while anc is not None:
+                    pt = _xmi_attr(anc, "type") or ""
+                    if pt.split(":")[-1] == "Profile":
+                        info["profile"] = anc.get("name")
+                        break
+                    anc = PARENTS.get(id(anc))
+        elif name == "Property" and eid in tagdefs:
+            tagdefs[eid]["name"] = el.get("name")
+            par = PARENTS.get(id(el))
+            if par is not None:
+                pt = _xmi_attr(par, "type") or ""
+                if pt.split(":")[-1] == "Stereotype":
+                    tagdefs[eid]["owner_stereo"] = par.get("name")
+    # re-key tag_values with resolved tag-definition names where available
+    for app_id, tags in list(imp.tag_values.items()):
+        rekeyed = {}
+        for key, val in tags.items():
+            td = tagdefs.get(key)
+            rekeyed[td["name"] if td and td.get("name") else key] = val
+        imp.tag_values[app_id] = rekeyed
+    imp.tag_definitions = tagdefs
+    imp.profile_layer_stats = {"stereotypes": len(imp.stereotypes),
+                               "tag_definitions": len(tagdefs),
+                               "applications": len(imp.applications),
+                               "tagged_values": tv_seen,
+                               "applied_stereotype_links": as_seen}
+    return tv_seen
+
+
+def _normalize_type_tagged_children(root, imp):
+    """Type-tagged containment children -> feature-tagged.
+
+    Nomagic nests some elements by TYPE (<uml:Profile> under a Package)
+    where the reader expects FEATURE tags (<packagedElement>).  The
+    metamodel decides the feature: walk the parent's descriptor table for
+    a composite feature whose type the child metaclass satisfies, and
+    rename the tag accordingly (type attribute injected if absent).
+    """
+    PARENTS = {id(c): p for p in root.iter() for c in p}
+    CANDIDATES = ("packagedElement", "ownedMember", "nestedClassifier",
+                  "ownedAttribute", "ownedEnd", "ownedLiteral",
+                  "ownedOperation", "ownedParameter", "ownedComment",
+                  "ownedConnector", "ownedRule")
+    n = 0
+    for el in list(root.iter()):
+        tag = el.tag
+        if not (isinstance(tag, str) and tag.startswith(f"{{{OMG_UML_251}}}")):
+            continue
+        name = _local(tag)
+        cls = _metaclass_safe(name)
+        if cls is None:
+            continue
+        par = PARENTS.get(id(el))
+        if par is None:
+            continue
+        ptype = _xmi_attr(par, "type") or ""
+        pcls = _metaclass_safe(ptype.split(":")[-1]) \
+            if ptype.startswith("uml:") else None
+        if pcls is None:
+            continue
+        for feat in CANDIDATES:
+            d = _PROPS.descriptor(pcls, feat)
+            if d is None or not d.multi or not d.composite \
+                    or not isinstance(d.t, str):
+                continue
+            ft = _metaclass_safe(d.t.split(":")[-1])
+            if ft is None or not issubclass(cls, ft):
+                continue
+            el.tag = f"{{{OMG_UML_251}}}{feat}"
+            if _xmi_attr(el, "type") is None:
+                el.set(XMI25_PREFIX + "type", "uml:" + name)
+            n += 1
+            break
+    imp.type_tagged_normalized = n
+    return n
 
 
 def _scrub_refs(root, imp):
@@ -430,6 +620,8 @@ def import_mdzip(path) -> MdZipImport:
         _inject_types_from_tags(root, imp)
         _coerce_types(root, imp, root)
         _drop_duplicates(root, imp)
+        _normalize_type_tagged_children(root, imp)
+        _extract_profile_layer(root, imp)
         _scrub_refs(root, imp)
         with tempfile.NamedTemporaryFile("w", suffix=".xmi", delete=False,
                                          encoding="utf-8") as tf:

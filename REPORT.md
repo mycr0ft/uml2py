@@ -1269,14 +1269,75 @@ checks**, all green. The exporter plan (E1-E6) is complete.
 
 ## Honest notes
 
-- The importer proper (aliased model members → xmi21.py → gen.uml25
-  objects) is the next increment; mdzip.py is the scrape/forensics
-  layer it will consume.
-- `iter_model_elements` types some elements by raw MagicDraw
-  metamodel IDs (`_9_0_2_91a0295_…` as xmi:type) rather than `uml:X`
-  names (88 + scattered occurrences in APE); a metaclass ID→name map
-  will be needed for full coverage.
-- Encrypted projects are out of scope by design.
+- Coverage is *construction* coverage: named Classes/Packages/DataTypes
+  come through with names and composition trees; feature coverage inside
+  objects is partial (260 unmapped_features on APE, dominated by the
+  profile layer: taggedValue 140, appliedStereotype 122).
+- Name-typed references are recorded, not resolved (`names#` markers):
+  458 on APE.  Resolving them against the merged model's named elements
+  is the next increment, along with the profile layer itself.
+- `Model` count includes synthetic roots; the reader's derived-name
+  provenance record applies to unnamed elements only.
+- Encrypted projects: MdZipImportError, by design.
+
+# Part 18: profile layer - stereotypes, extensions, applications, tags
+
+## Modeler addiction math (APE-ReferenceModel)
+
+- With Profile/Stereotype/Extension/ExtensionEnd constructible and the
+  Nomagic tagged-value forms harvested, APE jumps 422 -> 1536 objects
+  (295 Stereotypes, 248 Extensions, 611 Properties on SAF_FFDS; APE
+  244 Classes + 80 DataTypes + 83 Packages + 77 Stereotypes + 8 Profiles
+  + 15 Profiles constructed).  Modelers really do add stereotypes to
+  everything -- the profile layer is not an optional garnish.
+
+## Nomagic profile-layer forms (pinned)
+
+- Profile/Stereotype/Extension/ExtensionEnd are standard uml:X elements
+  (now in CONSTRUCTIBLE) and construct through the reader unchanged.
+- Applications: `<appliedStereotype href="#stereo-id"/>` children on the
+  applied element (184 on APE) and an unprefixed attribute form.  Both
+  are harvested into `imp.applications[base_id] = {"stereo", "tags"}`
+  and REMOVED from the tree (the reader has no such feature on Element).
+- Tagged values: Nomagic metaclasses `uml:{String,Boolean,Integer,
+  Element}TaggedValue` whose xmi:id encodes the linkage
+  `<application-id> 'application_' <tagDefinition-id>`, with
+  `<tagDefinition href="#...">` (the defining Property) and `<value/>`.
+  Harvested into `imp.tag_values[app][tag-name] = value` (values re-keyed
+  after tag-definition names resolve) and removed from the tree
+  (gen.uml25 has no such metaclasses).
+- **Type-tagged nesting** (`<uml:Profile>` under a Package, AML): the
+  containment feature is derived from the metamodel -- first composite
+  descriptor of the parent whose type the child satisfies wins; the tag
+  is renamed and xmi:type injected.  This fix alone unblocked AML
+  (crash -> 154 objects) and lifted MPS 101 -> 791, APE +404, SAF_FFDS
+  +1531: the type-tagged style is widespread, not an AML quirk.
+- Names: stereotypes get name + owning profile; tag definitions get name
+  + owner stereotype (via a parent map).  114/116 APE stereotypes named,
+  owners: MagicDraw Profile / StandardProfile / SysML /
+  additional_stereotypes.
+
+## Result
+
+- Stress set: 12/12; object totals APE 1536, SAF_FFDS 2157, MPS 791,
+  AML 154, DELS 104.  `unmapped` fell to 0 on 10/12 (APE exactly 0).
+- check_mdzip_import.py: 26 checks (was 18): stereotype/profile object
+  construction pins, harvest-map pins (116 stereotypes/298 apps/6
+  tagdefs on APE), tagdef name+owner, AML normalization.
+- Suites: 45 + 60 + 47 + 32 + 28 + 26 + 25 + 48 + 20 + 42 + 19 + 18 +
+  12(scratch) = **410 checks**, all green.
+
+## Honest notes
+
+- The application map records stereotype *references*; only 173/298 APE
+  applications resolve to a stereotype defined inside the same file (the
+  rest point into *used* projects -- resolvable once usage merging lands).
+- Tag values with content are rare in the public corpus (4/221 on APE --
+  the corpus is profile definitions, not applied models); the extractor's
+  value handling is pinned on those 4 plus the definition defaults.
+- The `holding_bin` package still swallows stray top-level Profiles; the
+  reader's packageImport/profileApplication links are not yet reconciled
+  with the harvested profile names.
 
 # Part 17: mdzip_import.py - .mdzip -> gen.uml25 objects
 

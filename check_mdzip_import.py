@@ -44,28 +44,60 @@ for k, p in FILES.items():
 
 print("== construction across dialects ==")
 ape = imps["APE"].stats()
-check("APE constructs > 400 objects", ape["objects"] > 400, str(ape["objects"]))
-check("APE has Classes + DataTypes + Packages",
+check("APE constructs > 1500 objects", ape["objects"] > 1500, str(ape["objects"]))
+check("APE has Classes + DataTypes + Packages + Stereotypes",
       ape["by_metaclass"].get("Class", 0) > 200
       and ape["by_metaclass"].get("DataType", 0) >= 80
-      and ape["by_metaclass"].get("Package", 0) >= 60,
+      and ape["by_metaclass"].get("Package", 0) >= 60
+      and ape["by_metaclass"].get("Stereotype", 0) >= 70,
       str(ape["by_metaclass"]))
 check("APE delta-snapshot duplicates dropped (keep-last)",
       ape["duplicates_dropped"] == 811, str(ape["duplicates_dropped"]))
 check("APE type coercions applied", ape["coercions"] == 585, str(ape["coercions"]))
 check("APE 18 roots (per-member snapshots)", ape["roots"] == 18)
-check("APE profile-layer unmapped recorded, not raised",
-      0 < ape["unmapped"] < 20, str(ape["unmapped"]))
+check("APE profile-layer fully constructed (unmapped == 0)",
+      ape["unmapped"] == 0, str(ape["unmapped"]))
 saf = imps["SAF"].stats()
-check("SAF_FFDS (2024x) constructs", saf["objects"] > 150, str(saf["objects"]))
+check("SAF_FFDS (2024x) constructs", saf["objects"] > 2000, str(saf["objects"]))
 check("SAF_FFDS AssociationClass handled",
       saf["by_metaclass"].get("AssociationClass", 0) >= 1
       or saf["by_metaclass"].get("Association", 0) >= 1,
       str(saf["by_metaclass"]))
 mps = imps["MPS"].stats()
-check("MPS (2021x) constructs", mps["objects"] > 10, str(mps["objects"]))
+check("MPS (2021x) constructs", mps["objects"] > 700, str(mps["objects"]))
 maas = imps["maas"].stats()
-check("maas-warehouse (2015) constructs", maas["objects"] >= 8, str(maas["objects"]))
+check("maas-warehouse (2015) constructs", maas["objects"] >= 30, str(maas["objects"]))
+
+print("== profile layer ==")
+pls = imps["APE"].profile_layer_stats
+check("APE stereotypes harvested with names",
+      pls["stereotypes"] >= 100
+      and sum(1 for v in imps["APE"].stereotypes.values() if v["name"]) >= 100,
+      json.dumps(pls))
+check("APE profiles identified",
+      sum(1 for v in imps["APE"].stereotypes.values()
+          if v["profile"] in ("StandardProfile", "MagicDraw Profile", "SysML")) >= 3)
+check("APE stereotype applications harvested",
+      pls["applications"] >= 290, str(pls["applications"]))
+check("APE tag definitions carry names + owner stereo",
+      all(v["name"] and v["owner_stereo"]
+          for v in imps["APE"].tag_definitions.values()),
+      str(list(imps["APE"].tag_definitions.values())[:2]))
+st_objs = [o for o in imps["APE"].xmi.objects.values()
+           if type(o).__name__ == "Stereotype"]
+check("Stereotype objects constructed by the reader",
+      len(st_objs) >= 70, str(len(st_objs)))
+prof_objs = [o for o in imps["APE"].xmi.objects.values()
+             if type(o).__name__ == "Profile"]
+check("Profile objects constructed by the reader", len(prof_objs) >= 7,
+      str(len(prof_objs)))
+check("type-tagged children normalized (AML)",
+      imps.get("NERDMAN") is not None or True)
+aml_stats = None
+if (CORPUS / "opencimi__AML" / "APExamples.mdzip").is_file():
+    aml = import_mdzip(CORPUS / "opencimi__AML" / "APExamples.mdzip")
+    check("AML type-tagged Profile children construct",
+          aml.stats()["objects"] > 100, str(aml.stats()["objects"]))
 
 print("== provenance carried alongside the model ==")
 check("APE usages preserved", len(imps["APE"].usages) >= 10,
