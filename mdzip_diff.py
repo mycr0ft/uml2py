@@ -50,7 +50,7 @@ FEATURE_SKIP = {"ownedComment", "ownedRule", "nameExpression",
                 "appliedStereotype", "taggedValue", "ownedDefinition"}
 
 
-def _flat(obj, path):
+def _flat(obj, path, path_by_obj=None):
     """Yield (path, value) leaf pairs for gen.uml25 object features."""
     for feat in sorted(obj._props):
         if feat in FEATURE_SKIP:
@@ -63,8 +63,17 @@ def _flat(obj, path):
             continue
         if isinstance(v, (str, int, bool)):
             yield path + feat, str(v)
+        elif isinstance(v, (list, tuple)):
+            # reference collections resolve to the targets' qualified
+            # paths (sorted) -- a type change is then a real value change
+            targets = sorted(str(path_by_obj.get(id(t), f"<{type(t).__name__}>"))
+                             if path_by_obj is not None else f"<{type(t).__name__}>"
+                             for t in v)
+            yield path + feat, "|".join(targets)
         else:
-            yield path + feat, f"<{type(v).__name__}>"
+            yield path + feat, str(path_by_obj.get(id(v), f"<{type(v).__name__}>")
+                                   if path_by_obj is not None
+                                   else f"<{type(v).__name__}>")
 
 
 def record_of(obj, imp, parent_path):
@@ -97,6 +106,7 @@ def flatten_model(imp):
                   "ownedOperation", "ownedParameter", "ownedConnector",
                   "ownedRule", "slot")
     seen = set()
+    path_by_obj = {}
 
     def walk(obj, path):
         if id(obj) in seen:
@@ -105,6 +115,7 @@ def flatten_model(imp):
         rec = record_of(obj, imp, path)
         if rec is None:
             return
+        path_by_obj[id(obj)] = rec["qualpath"]
         records.append(rec)
         for feat in COMPOSITES:
             try:
@@ -119,14 +130,32 @@ def flatten_model(imp):
     for r in imp.xmi.roots:
         walk(r, "")
 
-    # applications travel with their base element (stereotype names)
+    # second pass: rebuild feature dicts with the complete path map so
+    # reference features resolve to targets' qualified paths
+    obj_records = {}
+    for o in imp.xmi.objects.values():
+        p = path_by_obj.get(id(o))
+        if p is not None:
+            obj_records[p] = o
+    for rec in records:
+        o = obj_records.get(rec["qualpath"])
+        if o is not None:
+            rec["feats"] = dict(_flat(o, "", path_by_obj))
     return records
 
 
 def similarity(a, b):
-    """Jaccard over (feature, value) pairs."""
-    sa = {(k, v) for k, v in a["feats"].items()}
-    sb = {(k, v) for k, v in b["feats"].items()}
+    """Jaccard over scalar (feature, value) pairs.
+
+    Reference-valued features (resolved to qualified paths) are EXCLUDED:
+    when a package moves/regenerates every path value changes even though
+    the element is semantically identical -- paths belong to the diff
+    report, not to identity similarity.
+    """
+    def scalars(rec):
+        return {(k, v) for k, v in rec["feats"].items()
+                if "::" not in v and k != "name"}
+    sa, sb = scalars(a), scalars(b)
     if not sa and not sb:
         return 0.0
     inter = len(sa & sb)
@@ -158,6 +187,46 @@ def diff_records(old_recs, new_recs, threshold=0.6):
     for key in old_by_name.keys() & new_by_name.keys():
         if len(old_by_name[key]) == 1 and len(new_by_name[key]) == 1:
             matched[old_by_name[key][0]] = new_by_name[key][0]
+
+    # pass 2c: ROOT-level rename repair.  Free roots of the same
+    # metaclass pair by best SUBTREE overlap (Jaccard over descendant
+    # qualpaths) -- a pure top-level rename (NIST: Model DELS ->
+    # DiscreteEventLogisticsSystems) where the root name changed and its
+    # scalars cannot match.  Conservative: fires only for roots.
+    def owner_tail(p):
+        return p.rsplit("::", 2)[0] if "::" in p else ""
+
+    old_free = [p for p in old_by_path if p not in matched.values()]
+    new_free = [p for p in new_by_path if p not in matched]
+
+    def subtree_names(path, by_path):
+        return {q.rsplit("::", 1)[-1] for q in by_path
+                if q.startswith(path + "::")}
+
+    roots_o = [p for p in old_free if owner_tail(p) == ""]
+    roots_n = [p for p in new_free if owner_tail(p) == ""]
+    cand = []
+    for op in roots_o:
+        so = subtree_names(op, old_by_path)
+        if not so:
+            continue
+        for np_ in roots_n:
+            if old_by_path[op]["mc"] != new_by_path[np_]["mc"]:
+                continue
+            sn = subtree_names(np_, new_by_path)
+            if not sn:
+                continue
+            ov = len(so & sn) / len(so | sn)
+            if ov >= 0.4:
+                cand.append((ov, op, np_))
+    cand.sort(reverse=True)
+    used_o, used_n = set(), set()
+    for ov, op, np_ in cand:
+        if op in used_o or np_ in used_n:
+            continue
+        used_o.add(op)
+        used_n.add(np_)
+        matched[op] = np_
 
     # pass 3: same metaclass + same owner tail + similarity >= threshold
     def owner_tail(p):
@@ -245,6 +314,29 @@ def diff_records(old_recs, new_recs, threshold=0.6):
         "removed": removed_recs,
         "pairs": changed,
     }
+
+
+def model_hash(records, algorithm="sha256"):
+    """Semantic content hash over element records.
+
+    Hash input is one line per element:
+        metaclass \\x1f qualpath \\x1f feat=value \\x1f feat=value ...
+    Features sorted by name, values exactly as the diff sees them
+    (reference features already resolved to qualified paths).  The
+    element lines are SORTED so member order / snapshot order cannot
+    move the hash.  xmi:ids appear nowhere.
+    """
+    import hashlib
+    lines = []
+    for r in sorted(records, key=lambda r: (r["qualpath"], r["mc"])):
+        feats = "\\x1f".join(f"{k}={r['feats'][k]}"
+                             for k in sorted(r["feats"]))
+        lines.append(f"{r['mc']}\\x1f{r['qualpath']}\\x1f{feats}")
+    h = hashlib.new(algorithm)
+    for ln in sorted(lines):
+        h.update(ln.encode("utf-8", "replace"))
+        h.update(b"\\n")
+    return h.hexdigest()
 
 
 def import_records(path):
