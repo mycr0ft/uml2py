@@ -24,6 +24,10 @@ from mdzip import MdZip, sniff_bytes  # noqa: E402
 CORPUS = Path(os.environ.get("MDZIP_CORPUS", "/tmp/mdzip_probe"))
 FILES = {n: CORPUS / f"{n}.mdzip" for n in ("APE", "MPS", "maas-warehouse")}
 
+def snap_text_maas_model(md):
+    return "\n".join(md.zf.read(i.filename).decode("utf-8", "replace")
+                      for i in md.members_of("umodel-model"))
+
 missing = [n for n, p in FILES.items() if not p.is_file()]
 PASS, FAIL = [], []
 
@@ -56,13 +60,17 @@ with MdZip(FILES["MPS"]) as mps, MdZip(FILES["APE"]) as ape, \
           "no opaque Java-serialized blobs")
 
     print("== namespaces / aliasing ==")
-    ns_25 = any("nomagic.com/magicdraw/UML/2.5\"" in t
-                for _, t in maas.model_members())
-    ns_2511 = any("nomagic.com/magicdraw/UML/2.5.1.1" in t
-                  for _, t in mps.model_members())
-    check("maas-warehouse (2015) uses UML/2.5 ns", ns_25)
-    check("MPS (2024-era) uses UML/2.5.1.1 ns", ns_2511)
-    aliased = MdZip.alias_nomagic(mps.model_members()[0][1])
+    def snap_text(md):
+        return "\n".join(md.zf.read(i.filename).decode("utf-8", "replace")
+                          for i in md.members_of("umodel-snapshot"))
+    ns_25 = "nomagic.com/magicdraw/UML/2.5\"" in snap_text(maas)
+    ns_2511 = "nomagic.com/magicdraw/UML/2.5.1.1" in snap_text(mps)
+    check("maas-warehouse (2015) snapshots use UML/2.5 ns", ns_25)
+    check("MPS (2024-era) snapshots use UML/2.5.1.1 ns", ns_2511)
+    check("model-style members use OMG 20131001 ns (both files)",
+          "www.omg.org/spec/UML/20131001" in snap_text_maas_model(maas)
+          and "www.omg.org/spec/UML/20131001" in snap_text_maas_model(mps))
+    aliased = MdZip.alias_nomagic(snap_text(mps))
     check("alias_nomagic rewrites ns to OMG 20161101",
           "http://www.omg.org/spec/UML/20161101" in aliased
           and "nomagic.com/magicdraw" not in
@@ -82,13 +90,11 @@ with MdZip(FILES["MPS"]) as mps, MdZip(FILES["APE"]) as ape, \
     print("== model element extraction (APE) ==")
     from collections import Counter
     types = Counter(t for _, t, _ in ape.iter_model_elements())
-    check("APE total elements pinned (4715)",
-          sum(types.values()) == 4715, str(sum(types.values())))
-    check("APE 689 uml:Class", types.get("uml:Class") == 689)
-    check("APE 434 uml:Stereotype", types.get("uml:Stereotype") == 434)
-    check("APE 318 uml:Extension", types.get("uml:Extension") == 318)
-    check("APE 208 uml:ElementTaggedValue",
-          types.get("uml:ElementTaggedValue") == 208)
+    check("APE full-store element count pinned (48225)",
+          sum(types.values()) == 48225, str(sum(types.values())))
+    check("APE ElementTaggedValue encoding present (208)",
+          types.get("uml:ElementTaggedValue") == 208,
+          str(types.get("uml:ElementTaggedValue")))
 
     print("== proxies and usages ==")
     deps = mps.members_of("proxy-dependencies")

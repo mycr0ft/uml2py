@@ -456,9 +456,16 @@ def _scrub_refs(root, imp):
             auri, _, ln = k.rpartition("}")
             if not v:
                 continue
-            if ln not in ("href", "idref", "type") or auri:
-                continue    # xmi:type (metaclass decl) and other ns attrs pass
-            if ln == "idref" and v in ids:
+            if auri:
+                continue    # namespaced attrs pass (xmi:type etc.)
+            refish = ln in ("href", "idref", "type", "memberEnd", "client",
+                            "supplier", "general", "specific", "behavior",
+                            "method", "specification", "classifier",
+                            "association", "usedElements", "usedObjects",
+                            "parameter", "context", "body")
+            if not refish:
+                continue
+            if ln == "idref" and v in ids and v not in ids_bad:
                 continue    # real idref, reader handles it
             m = PROJECT_HREF.match(v)
             if m and (v.startswith("local:") or "?resource=" in v
@@ -468,6 +475,13 @@ def _scrub_refs(root, imp):
                     rest = rest[len("local:"):]
                 new = f"{SYNTH_BASE}/{rest.lstrip('/')}"
                 el.set(k, new)
+                imp.cross_project.append((_xmi_attr(el, "id"), ln, v))
+                n_cross += 1
+                continue
+            if ln == "href" and not v.startswith(("http", "#", SYNTH_BASE)) \
+                    and "#" in v:
+                # bare used-project href: 'SysML Profile.mdzip#<id>'
+                el.set(k, f"{SYNTH_BASE}/usage#{v}")
                 imp.cross_project.append((_xmi_attr(el, "id"), ln, v))
                 n_cross += 1
                 continue
@@ -493,6 +507,20 @@ def _scrub_refs(root, imp):
                     del el.attrib[k]
                     el.set("href", f"{SYNTH_BASE}/profile-layer#{v}")
                     n_name += 1
+                    continue
+                if "#" in v and not v.startswith("#"):
+                    # cross-project idref: 'SysML Profile.mdzip#<id>'
+                    el.set(k, f"{SYNTH_BASE}/usage#{v}")
+                    n_name += 1
+                    continue
+                if v not in ids:
+                    # dangling in-document idref (stale references to
+                    # elements no longer in any model member -- seen in
+                    # NIST CentralFillPharmacy shared_model)
+                    el.set(k, f"{SYNTH_BASE}/dangling#{v}")
+                    imp.dangling_internal.append((_xmi_attr(el, "id"), ln, v))
+                    n_dangle += 1
+                    continue
                 continue    # real idref to a constructible object
             # Nomagic dialect: name-typed references on reference features
             # (type="uml:Property") instead of idrefs; only for features the
@@ -503,6 +531,20 @@ def _scrub_refs(root, imp):
                 new = f"{SYNTH_BASE}/names#{v}"
                 el.set(k, new)
                 imp.name_refs.append((_xmi_attr(el, "id"), ln, v))
+                n_name += 1
+                continue
+            if ln == "type" and v not in ids and v.startswith("_"):
+                # unprefixed type= attribute carrying a stale Nomagic id
+                # (no ':' so not name-typed; target no longer exists)
+                el.set(k, f"{SYNTH_BASE}/dangling#{v}")
+                imp.dangling_internal.append((_xmi_attr(el, "id"), ln, v))
+                n_dangle += 1
+                continue
+            if ln == "type" and v in ids_bad:
+                # unprefixed type= attribute pointing at an element that
+                # exists but is not constructible (uml:Activity etc. --
+                # behavior-layer elements): record as external marker
+                el.set(k, f"{SYNTH_BASE}/profile-layer#{v}")
                 n_name += 1
     return n_cross, n_dangle, n_name
 
@@ -589,8 +631,8 @@ def _merged_document(mdzip):
         used += 1
         for child in list(mroot):
             ln = _local(child.tag)
-            if isinstance(child.tag, str) \
-                    and child.tag.startswith(f"{{{OMG_UML_251}}}") \
+            ctag = child.tag if isinstance(child.tag, str) else ""
+            if "omg.org/spec/UML" in ctag \
                     and ln in ("Model", "Package"):
                 root.append(child)   # re-parent (splices the subtree)
             else:

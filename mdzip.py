@@ -43,6 +43,7 @@ XMI_TYPE_KEYS = ("{http://www.omg.org/XMI}type",
 
 UMODEL_SNAPSHOT = re.compile(
     r"_resource_com\$dnomagic\$dmagicdraw\$duml_umodel\$d.*dsnapshot$")
+UMODEL_MODEL = re.compile(r"^com\.nomagic\.magicdraw\.uml_model\.(model|shared_model)$")
 PROXY_MEMBER = re.compile(r"proxy\.local__PROJECT\$")
 PROJECT_MEMBER = re.compile(r"^PROJECT-[0-9a-f]{8}-[0-9a-f]{4}-")
 DEPENDENCY_LIST = re.compile(r"privatedependencylist$")
@@ -129,6 +130,8 @@ class MdZip:
     def kind_of(self, name):
         if UMODEL_SNAPSHOT.search(name):
             return "umodel-snapshot"
+        if UMODEL_MODEL.search(name):
+            return "umodel-model"
         if DEPENDENCY_LIST.search(name):
             return "proxy-dependencies"
         if PROXY_MEMBER.search(name):
@@ -154,11 +157,30 @@ class MdZip:
 
     # -- model members ------------------------------------------------------
     def model_members(self):
-        """(name, root) for each umodel snapshot member."""
+        """(name, root) for the model-bearing members.
+
+        Two persistence layouts coexist and SOME FILES NEED BOTH:
+          - snapshot style: proxy.local__PROJECT$...umodel...dsnapshot
+            members (XMI 2.0 spellings) -- may carry the project's own
+            model content (APE: 18 snapshot members, 2250 ids);
+          - model style: com.nomagic.magicdraw.uml_model.model (primary
+            model, can be a small stub pointing at used shared projects)
+            and ...shared_model (profile libraries, can be the bulk:
+            APE shared_model = 9.5 MB, 18k ids).
+        The id spaces are near-disjoint (overlap ~14 ids on APE), so
+        merging BOTH styles is correct; keep-last dedup in the importer
+        collapses the tiny overlap.  Order: snapshots first, model-style
+        last (later wins on dedup, and the model-style store is newer).
+        """
         out = []
-        for i in self.members_of("umodel-snapshot"):
-            root = self.zf.read(i.filename).decode("utf-8", "replace")
-            out.append((i.filename, root))
+        for i in self.members:
+            if self.kind_of(i.filename) == "umodel-snapshot":
+                out.append((i.filename,
+                            self.zf.read(i.filename).decode("utf-8", "replace")))
+        for i in self.members:
+            if self.kind_of(i.filename) == "umodel-model":
+                out.append((i.filename,
+                            self.zf.read(i.filename).decode("utf-8", "replace")))
         return out
 
     @staticmethod

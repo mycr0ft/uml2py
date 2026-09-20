@@ -64,7 +64,7 @@ CONSTRUCTIBLE = {"Model", "Package", "Class", "DataType", "Enumeration",
                  "PrimitiveType", "Association", "AssociationClass",
                  "Property", "Port", "Profile", "Stereotype", "Extension",
                  "ExtensionEnd", "Comment", "EnumerationLiteral",
-                 "LiteralInteger",
+                 "LiteralInteger", "Signal",
                  "LiteralUnlimitedNatural", "LiteralString", "Operation",
                  "OpaqueExpression", "Connector", "ConnectorEnd",
                  "Generalization", "InstanceSpecification", "Slot",
@@ -92,6 +92,7 @@ class XMI21Model:
         self.synthetic_types = {}  # href -> synthetic U.DataType
         self.unmapped = []       # (xmi:id, tag) not constructible
         self.unmapped_features = []  # (xmi:id, feature) not in the tables
+        self.unresolved_refs = []    # (obj_id, feature, ref) dangling idrefs
         self.profiles = []       # appliedProfile hrefs
         self.roots = []          # top-level UML Namespace objects
         self.derived_names = []  # (xmi:id, derived name) provenance record
@@ -268,12 +269,23 @@ def read_xmi21(path) -> XMI21Model:
                     st = cls(name=frag)
                     st._external_href = ref
                     xmi.synthetic_types[frag] = st
-                setattr(obj, feat, st)
+                # descriptor-driven assignment: some REF_SINGLE features
+                # (general) are multi in the metamodel -- a single
+                # synthetic marker must follow the descriptor's arity
+                d = obj._props.get(feat)
+                if d is not None and d.multi:
+                    obj._vals[feat] = (obj._vals.get(feat) or []) + [st]
+                else:
+                    setattr(obj, feat, st)
             continue
         target = xmi.objects.get(ref)
         if target is None:
-            raise UnresolvedReference(
-                f"{type(obj).__name__}.{feat} -> xmi:idref {ref!r} unresolved")
+            # dangling in-document idref (stale reference to an element
+            # that never constructed -- e.g. a Property inside a
+            # non-constructible Activity ancestor): recorded, not raised
+            xmi.unresolved_refs.append(
+                (getattr(obj, "_xmi_id", "?"), feat, ref))
+            continue
         if single:
             obj._vals[feat] = target
         else:

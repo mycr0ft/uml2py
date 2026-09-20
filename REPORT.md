@@ -1339,6 +1339,85 @@ checks**, all green. The exporter plan (E1-E6) is complete.
   reader's packageImport/profileApplication links are not yet reconciled
   with the harvested profile names.
 
+# Part 19: mdzip_diff.py - semantic diff across id churn
+
+## The problem (from GT experience)
+
+- mdzip XML churns: every save reorders members, delta snapshots duplicate
+  subtrees, TeamworkCloud rewrites every element's server id.  Byte/XML
+  diffs are noise.  Diff must be semantic.
+
+## Algorithm
+
+- import both files with mdzip_import; flatten to records
+  (metaclass, qualified path, feature dict) -- xmi:ids never enter the
+  record (pinned by a check).
+- match: (1) exact qualified path; (2) same metaclass+name with unique
+  move; (3) same metaclass + same owner tail + Jaccard(feature pairs)
+  >= threshold, greedy best-first; (3b) same metaclass + same NAME +
+  similarity >= threshold regardless of owner (whole-package
+  regeneration: openEHR AM->AM14 moves every owner chain);
+- diff matched pairs feature-by-feature; report
+  added/removed/renamed/moved/changed.
+
+## Calibration over 18 real revision pairs (fetched from git history)
+
+- **Noise immunity**: SAF "add an attribute" commit actually contains
+  ZERO model change (the member CRCs differ only in diagram-view and
+  options members) -- diff reads exactly zero; openEHR "non-semantic
+  changes" pair: 49+48 raw churn collapses to 1 add + 230 identity
+  repairs (whole-package regeneration matched semantically).
+- **Change detection**: DLR "Add the ControlledProcessSTPA stereotype" =>
+  exactly 3 added records (stereotype + base_Class + base_Property),
+  0 removed; CEMT RC10->2022xR2 => 8 added, 1 removed.
+- **Identity repair**: NIST "Renamed top-level container from DELS to
+  Data" => 0 false adds, 11 moves matched incl. Model::DELS ->
+  Model::Data.
+- openEHR AM->AM14 regeneration: matched 271/272 across wholesale id
+  and path churn.
+
+## Reader changes made during diff calibration
+
+- Pending resolution degrades instead of raising: dangling in-document
+  idrefs are recorded (`unresolved_refs`) -- NIST carries genuinely stale
+  refs to elements no longer in any member.
+- xmi21 COMPOSITE += slot/generalization/ownedRule; REF_SINGLE +=
+  owningPackage; CONSTRUCTIBLE += Signal (and profile layer metaclasses).
+- Synthetic-marker assignment follows the descriptor's arity (some
+  REF_SINGLE features like `general` are multi in the metamodel; a
+  single marker set through a multi descriptor crashed -- SAF).
+- **Both persistence styles merge**: some files carry snapshot members
+  (project content) AND uml_model.model/shared_model members (profile
+  libraries / new-style store) with near-disjoint id spaces (APE
+  overlap 14 ids of 20000) -- superseding one style loses half the
+  model; merging both + keep-last dedup lifted APE 1536 -> 9164 objects,
+  SAF_FFDS 2384 -> 4539, MPS 418 -> 1207.  APE's uml_model.model member
+  is a 9 KB stub; shared_model (9.5 MB) is the profile-library store.
+- Dangling unprefixed `type=` attrs (stale ids, no `:`) and refs to
+  non-constructible behavior-layer elements (uml:Activity ancestors)
+  become recorded synthetic markers.
+
+## Result
+
+- check_mdzip_diff.py: 12 checks (noise immunity x2, change detection
+  x4, identity repair x3, id-independence).
+- Suites: 45 + 60 + 47 + 32 + 28 + 26 + 12 + 25 + 48 + 20 + 42 + 19 +
+  18 = **422 checks**, all green.
+
+## Honest notes
+
+- Similarity matching is greedy (best-first, one-to-one); pathological
+  cases (bulk renames of hundreds of same-metaclass same-name elements)
+  could pair suboptimally -- acceptable for change tracking, revisit if
+  GT corpus shows it.
+- Feature extraction reads named scalar/reference features; structural
+  children (e.g. nested classifiers) enter the qualpath, not the feature
+  dict, so their changes surface as added/removed records rather than
+  modified pairs.
+- The andromda profile pair was mis-fetched initially (file renamed
+  profile.mdzip -> profile2.mdzip in the same commit); the correct
+  before/after pair (166 -> 172, 6 added) is now in _revisions.
+
 # Part 17: mdzip_import.py - .mdzip -> gen.uml25 objects
 
 ## Architecture
