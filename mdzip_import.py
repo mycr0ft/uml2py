@@ -90,6 +90,7 @@ class MdZipImport:
         self.tag_definitions = {}    # tagdef xmi:id -> info dict
         self.tag_values = {}         # app xmi:id -> {tag name: string value}
         self.profile_layer_stats = {}
+        self.diagrams = []           # <ownedDiagram> records (MD tool layer)
         self.skipped_stray = 0
 
     def stats(self):
@@ -432,6 +433,53 @@ def _normalize_type_tagged_children(root, imp):
     return n
 
 
+
+def _content_refs_iter(el):
+    for c in el.iter():
+        if _local(c.tag) == "usedElements":
+            ref = c.get("{http://www.omg.org/spec/XMI/20131001}idref") \
+                or c.get("idref") or (c.text or "").strip()
+            if ref:
+                yield ref
+
+
+def _harvest_diagrams(root, imp):
+    """MagicDraw carries diagrams as <ownedDiagram xmi:type="uml:Diagram">
+    under <xmi:Extension><modelExtension> wrappers on model elements.
+    gen.uml25 has no Diagram metaclass; harvest each diagram as a record
+    {id, name, context, owner_ref, n_contents, owner_obj} into
+    imp.diagrams.  The xmi:Extension wrapper element itself is removed
+    from the tree (the reader records it as an unmapped feature
+    otherwise).  Table/matrix schemas (RelationMap, Dependency Matrix)
+    are NOT here: they arrive as stereotype-application tags and are
+    harvested with the profile layer."""
+    diagrams = []
+    removed_ext = 0
+    for parent in list(root.iter()):
+        for el in list(parent):
+            if _local(el.tag) != "ownedDiagram":
+                continue
+            eid = _xmi_attr(el, "id")
+            ctx = _xmi_attr(el, "context") or ""
+            content_refs = list(_content_refs_iter(el))
+            diagrams.append({
+                "id": eid,
+                "name": el.get("name"),
+                "context": ctx,
+                "owner_ref": _xmi_attr(el, "ownerOfDiagram") or "",
+                "content_refs": content_refs,
+                "owner_obj": None,
+            })
+            # the whole <xmi:Extension> wrapper containing this diagram
+            wrapper = parent
+            # only remove the diagram element; keep the wrapper's other
+            # children (they are already unmapped_features records)
+            parent.remove(el)
+            removed_ext += 1
+    imp.diagrams = diagrams
+    return len(diagrams), removed_ext
+
+
 def _scrub_refs(root, imp):
     """Cross-project refs, dangling refs, name-typed refs -> synthetic hrefs.
 
@@ -664,6 +712,7 @@ def import_mdzip(path) -> MdZipImport:
         _drop_duplicates(root, imp)
         _normalize_type_tagged_children(root, imp)
         _extract_profile_layer(root, imp)
+        _harvest_diagrams(root, imp)
         _scrub_refs(root, imp)
         with tempfile.NamedTemporaryFile("w", suffix=".xmi", delete=False,
                                          encoding="utf-8") as tf:

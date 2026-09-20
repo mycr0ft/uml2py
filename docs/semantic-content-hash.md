@@ -132,7 +132,7 @@ is the receipt.
 
 ## 5. Operational uses (the point of the exercise)
 
-1. **In-file version stamp.** The hash belongs in the release record of
+- **In-file version stamp.** The hash belongs in the release record of
    every model artifact: `SensorModel.mdzip  sha256:9c4f…  built 2026-09-19`.
    It is computable from the file alone, needs no tool cooperation, and
    answers "did the content change?" for the cost of one import.
@@ -173,6 +173,22 @@ is the receipt.
   change (ownedComment) is invisible to the hash. That is deliberate
   (comments churn constantly and carry no formal semantics), but it
   should be stated in any workflow that relies on the stamp.
+- **Diagrams and tables ARE now hashed — via their content.** The
+  non-UML metamodel layer turned out to live in two places: (a)
+  `<ownedDiagram xmi:type="uml:Diagram">` under `xmi:Extension`
+  wrappers (362 on APE), harvested as `Diagram` records carrying the
+  *resolved paths of the elements the diagram displays*
+  (`diagramContents/usedElements`); (b) tables, relation maps and
+  dependency matrices, which are stereotype applications
+  (`MagicDraw_Profile:RelationMap:elementTypes`-style tags), harvested
+  with the profile layer and attached to their owner's record as
+  `«Stereo»:tag` features. Diagram *presentation* (`BINARY-*`,
+  `mdOwnedViews` geometry) is not hashed — it is drawing, not model.
+  Diagram content refs that point into *used* projects are recorded as
+  `<unresolved>` until usage merging lands, so no raw ids ever enter
+  the digest. Proven SAF re-save: the SAF changelog Table genuinely
+  gained a row in the "re-save" commit — the diagram layer catches it,
+  and the hash moves, correctly.
 - **Deliberately excluded features.** `appliedStereotype` and
   `taggedValue` features are harvested into the importer's application
   maps but are excluded from the current hash input; stereotype

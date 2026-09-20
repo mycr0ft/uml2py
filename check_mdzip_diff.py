@@ -54,11 +54,26 @@ if p:
     rb, _ = import_records(p / "new.mdzip")
     rep = diff_records(ra, rb)
     c = rep["counts"]
-    check("SAF profile re-save => zero semantic delta",
-          c["added"] == 0 and c["removed"] == 0 and c["changed"] == 0
+    # the changelog Table carries a stereotype application whose tag
+    # changed (the new row) -- element-level diff reports exactly 1 change
+    check("SAF pair: exactly one element-level change (the table)",
+          c["added"] == 0 and c["removed"] == 0 and c["changed"] == 1
           and c["moved_or_renamed"] == 0, json.dumps(c))
     check("SAF pair: matched == old == new",
           c["matched"] == c["old"] == c["new"], json.dumps(c))
+    # the re-save DID touch a table diagram: SAF_changelog Table gained a
+    # usedElements row (new changelog entry) -- visible as a Diagram diff
+    from mdzip_diff import model_hash
+    da = [r for r in ra if r["mc"] == "Diagram"
+          and "changelog" in (r["name"] or "")]
+    db = [r for r in rb if r["mc"] == "Diagram"
+          and "changelog" in (r["name"] or "")]
+    check("SAF: diagram layer catches the changelog-table content edit",
+          len(da) == 1 and len(db) == 1
+          and da[0]["feats"]["contents"] != db[0]["feats"]["contents"],
+          f"{da[0]['feats']['contents'][:40]} vs {db[0]['feats']['contents'][:40]}")
+    check("SAF: model_hash differs (real content change, not noise)",
+          model_hash(ra) != model_hash(rb))
 p = pair("openEHR__specifications-AM_openEHR_UML-AM-14.mdzip_9f99cc-b830e8")
 if p:
     ra, _ = import_records(p / "old.mdzip")
@@ -93,8 +108,8 @@ if p:
     rb, _ = import_records(p / "new.mdzip")
     rep = diff_records(ra, rb)
     c = rep["counts"]
-    check("CEMT RC10->2022xR2: 8 stereotypes added, 1 removed",
-          c["added"] == 8 and c["removed"] == 1, json.dumps(c))
+    check("CEMT RC10->2022xR2: 9 stereotypes added, 1 removed",
+          c["added"] == 9 and c["removed"] == 1, json.dumps(c))
 
 print("== identity repair (renames/moves) ==")
 p = pair("usnistgov__DiscreteEventLogist_CentralFillPharmacy.mdzip_ade53f-035274")

@@ -95,6 +95,20 @@ def flatten_model(imp):
     The reader builds composition trees through containment features
     (packagedElement, ownedAttribute, ...); we use the parent maps from
     the constructed objects themselves via _vals walk.
+
+    Non-UML metamodel content is spliced in as synthetic records:
+      - Diagrams: MagicDraw serializes diagrams as <ownedDiagram
+        xmi:type="uml:Diagram"> under <xmi:Extension><modelExtension>;
+        the reader has no Diagram metaclass, so each diagram becomes a
+        record (mc="Diagram") attached to its owner's qualpath, with
+        name + context + the count/set of diagramContents usedElements
+        (resolved to paths where possible).  This makes "diagram was
+        added / renamed / its contents changed" visible to diff+hash.
+      - Tables / relation maps / dependency matrices: encoded as
+        stereotype applications (tag name='Profile:Stereo:feature',
+        e.g. MagicDraw_Profile:RelationMap:elementTypes) -- they are
+        already harvested into imp.applications/tag_values and are
+        attached below as stereotype tags on their owner's record.
     """
     records = []
     parent_of = {}
@@ -141,6 +155,47 @@ def flatten_model(imp):
         o = obj_records.get(rec["qualpath"])
         if o is not None:
             rec["feats"] = dict(_flat(o, "", path_by_obj))
+
+    # ---- non-UML metamodel splice: diagrams + stereotype tags ----------
+    # Diagrams come from the importer's diagram harvest (mdzip_import
+    # stashes imp.diagrams); each becomes a record under its owner.
+    # xmi:id -> qualpath for diagram content resolution
+    xid_to_path0 = {}
+    for xid, obj in imp.xmi.objects.items():
+        p = path_by_obj.get(id(obj))
+        if p is not None:
+            xid_to_path0[xid] = p
+    diagrams = getattr(imp, "diagrams", None) or []
+    for d in diagrams:
+        base = xid_to_path0.get(d.get("owner_ref"), "::")
+        contents = sorted(
+            (xid_to_path0.get(r, "").rsplit("::", 1)[-1]
+             if xid_to_path0.get(r) else "<unresolved>")
+            for r in d.get("content_refs", []))
+        records.append({
+            "mc": "Diagram",
+            "name": d.get("name"),
+            "qualpath": f"{base}::diagram::{d.get('name') or '<unnamed>'}",
+            "feats": {"contents": "|".join(contents)},
+        })
+
+    # stereotype applications as tag features on the owner record:
+    # application keys are xmi:id strings -> resolve via objects dict
+    rec_by_path = {r["qualpath"]: r for r in records}
+    xid_to_path = xid_to_path0
+    for app_id, app in imp.applications.items():
+        base_path = xid_to_path.get(app_id)
+        if base_path is None:
+            continue
+        rec = rec_by_path.get(base_path)
+        if rec is None:
+            continue
+        sid = app.get("stereo")
+        sname = (imp.stereotypes.get(sid) or {}).get("name") or sid
+        rec["feats"]["«stereo»"] = sname
+        for tag_name, tag_val in (imp.tag_values.get(app_id) or {}).items():
+            if tag_val is not None:
+                rec["feats"][f"«{sname}»:{tag_name}"] = str(tag_val)
     return records
 
 
