@@ -1,0 +1,13 @@
+{
+ "source_sysml": "/tmp/SysML2.xmi",
+ "source_kerml": "/tmp/kerml.xmi",
+ "classes": 175,
+ "attributes": 428,
+ "operations": 103,
+ "enums": 7,
+ "constraints": 623,
+ "associations": 319,
+ "kerml_classes": 82,
+ "sysml2_classes": 93,
+ "generated_lines": 6381
+}
