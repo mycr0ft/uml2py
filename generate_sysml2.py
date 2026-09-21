@@ -413,7 +413,7 @@ def main(argv):
     WRITABLE_DERIVED = {"ownedTyping", "ownedSpecialization", "ownedFeature",
                         "owningFeature", "owningType",
                         "owningClassifier", "subclassifier",
-                        "superclassifier"}
+                        "superclassifier", "ownedMemberElement"}
     for a in attr_by_id.values():
         if a.name in WRITABLE_DERIVED:
             a.derived = False
@@ -740,16 +740,34 @@ def main(argv):
     w("        return self._namespace")
     w("    @property")
     w("    def ownedElement(self):")
-    w('        """KerML §7.3.2: ownedElement = the ownedRelatedElements of the')
-    w('        Relationships this Element owns. Computed from the owner')
-    w('        back-wiring maintained by _hook_add (the CMOF XMI leaves')
-    w('        ownedElement a derived union with no subsetters)."""')
+    w('        """KerML §7.3.2.3: ownedElement = the members owned via')
+    w('        OwningMemberships this Element owns (the Membership chain),')
+    w('        plus owned non-relationship Elements carried on other owned*')
+    w('        ends. Computed from the wiring the runtime maintains; the')
+    w('        CMOF XMI leaves ownedElement a derived union with no')
+    w('        subsetters."""')
     w("        out, seen = [], set()")
     w("        for r in self.ownedRelationship:")
-    w("            for e in r.ownedRelatedElement:")
-    w("                if e is not None and id(e) not in seen:")
-    w("                    seen.add(id(e))")
-    w("                    out.append(e)")
+    w("            if isinstance(r, OwningMembership):")
+    w("                for e in r.ownedRelatedElement:")
+    w("                    if e is not None and id(e) not in seen:")
+    w("                        seen.add(id(e))")
+    w("                        out.append(e)")
+    w("        for cls in type(self).__mro__:")
+    w("            for pname, d in getattr(cls, '_DECL', {}).items():")
+    w("                if not pname.startswith('owned') or d.derived:")
+    w("                    continue  # derived owned* ends are computed views")
+    w("                if pname in ('ownedRelationship', 'ownedMemberElement',")
+    w("                             'ownedRelatedElement', 'ownedAnnotation',")
+    w("                             'ownedSpecialization', 'ownedTyping',")
+    w("                             'ownedFeature'):")
+    w("                    continue  # relationships / aliased ends")
+    w("                v = d.__get__(self)")
+    w("                items = v if d.multi else ((v,) if v is not None else ())")
+    w("                for it in items:")
+    w("                    if isinstance(it, _Element) and id(it) not in seen:")
+    w("                        seen.add(id(it))")
+    w("                        out.append(it)")
     w("        return out")
     w("    def __repr__(self):")
     w("        n = self._vals.get('declaredName') or self._vals.get('name')")

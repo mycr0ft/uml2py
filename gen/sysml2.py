@@ -246,16 +246,34 @@ class _Element:
         return self._namespace
     @property
     def ownedElement(self):
-        """KerML §7.3.2: ownedElement = the ownedRelatedElements of the
-        Relationships this Element owns. Computed from the owner
-        back-wiring maintained by _hook_add (the CMOF XMI leaves
-        ownedElement a derived union with no subsetters)."""
+        """KerML §7.3.2.3: ownedElement = the members owned via
+        OwningMemberships this Element owns (the Membership chain),
+        plus owned non-relationship Elements carried on other owned*
+        ends. Computed from the wiring the runtime maintains; the
+        CMOF XMI leaves ownedElement a derived union with no
+        subsetters."""
         out, seen = [], set()
         for r in self.ownedRelationship:
-            for e in r.ownedRelatedElement:
-                if e is not None and id(e) not in seen:
-                    seen.add(id(e))
-                    out.append(e)
+            if isinstance(r, OwningMembership):
+                for e in r.ownedRelatedElement:
+                    if e is not None and id(e) not in seen:
+                        seen.add(id(e))
+                        out.append(e)
+        for cls in type(self).__mro__:
+            for pname, d in getattr(cls, '_DECL', {}).items():
+                if not pname.startswith('owned') or d.derived:
+                    continue  # derived owned* ends are computed views
+                if pname in ('ownedRelationship', 'ownedMemberElement',
+                             'ownedRelatedElement', 'ownedAnnotation',
+                             'ownedSpecialization', 'ownedTyping',
+                             'ownedFeature'):
+                    continue  # relationships / aliased ends
+                v = d.__get__(self)
+                items = v if d.multi else ((v,) if v is not None else ())
+                for it in items:
+                    if isinstance(it, _Element) and id(it) not in seen:
+                        seen.add(id(it))
+                        out.append(it)
         return out
     def __repr__(self):
         n = self._vals.get('declaredName') or self._vals.get('name')
@@ -2280,7 +2298,7 @@ class OwningMembership(Membership):
     _DECL = {
     # <p>The <code>Element</code> that becomes an <code>ownedMember</code> of the <code>membershipOwni
     # ngNamespace</code> due to this <code>OwningMembership</code>.</p>
-    'ownedMemberElement': _Ref('ownedMemberElement', "Element", derived=True, composite=True, subsets=("ownedRelatedElement",), redefines=("memberElement",), assoc="Root-Namespaces-A_ownedMemberElement_owningMembership"),
+    'ownedMemberElement': _Ref('ownedMemberElement', "Element", composite=True, subsets=("ownedRelatedElement",), redefines=("memberElement",), assoc="Root-Namespaces-A_ownedMemberElement_owningMembership"),
     # <p>The <code>elementId</code> of the <code>ownedMemberElement</code>.</p>
     'ownedMemberElementId': _Ref('ownedMemberElementId', str, derived=True, composite=True, redefines=("memberElementId",)),
     # <p>The <code>name</code> of the <code>ownedMemberElement</code>.</p>
