@@ -1491,3 +1491,97 @@ checks**, all green. The exporter plan (E1-E6) is complete.
 - `Model` count includes synthetic roots; the reader's derived-name
   provenance record applies to unnamed elements only.
 - Encrypted projects: MdZipImportError, by design.
+
+# Part 20: R1+R2+R3 conformance chain - gen/sysml2 runtime + v1_to_v2_as.py
+
+The transformation-conformance clause (§2 of ptc/2025-04-07) names three
+artifacts: read a v1 model representation (R1), have a v2 abstract-syntax
+representation (R2), and transform the first into the second (R3). This
+part closes the chain end to end.
+
+## R2 - gen/sysml2.py runtime additions
+
+The generated module (from the OMG normative CMOF XMI, Part 18-era commit)
+gained the runtime surface the transformer needs, in both gen/sysml2.py and
+generate_sysml2.py (idempotence verified: regeneration is byte-identical):
+
+- `_MemberAlias` descriptor: KerML redefinition aliases
+  (Membership/OwningMembership/FeatureMembership `.memberElement`,
+  FeatureMembership `.ownedMemberFeature`) reading/writing the storage end
+  `Relationship.ownedRelatedElement` through the redefining name
+  (KerML §7.3.1.3).
+- `Type.feature` / `Classifier.feature`: computed property - the features
+  directly featured by the type, i.e. the memberElements of owned
+  FeatureMemberships (§7.4.1.2; the CMOF XMI end is a derived union with
+  no storage).
+
+check_sysml2.py grew the derived-union reads (26 checks, green).
+
+## R3 - v1_to_v2_as.py (wave A)
+
+Same normative mappings as the validated textual emitter (v1_to_v2.py),
+but constructing gen.sysml2 objects. Architecture:
+
+- **Index identity (the conformance-critical rule)**: one v1 element maps
+  to exactly ONE AS object; pass 1 builds definitions, pass 2 features/
+  nested members, pass 3 generalizations. Every FeatureTyping.type and
+  Subclassification.general references the indexed object - usages never
+  copy their type's definition.
+- Ownership via OwningMembership (package members, nested classifiers,
+  documentation); features via FeatureMembership (making the definition
+  the featuringType); typing via FeatureTyping owned by the feature
+  (ownedTyping back-wires owningFeature/typedFeature).
+- Wave-A mappings: Block→PartDefinition (7.8.4.3.3), composite block-typed
+  Property→PartUsage (7.8.4.3.13), non-composite→PartUsage isComposite=
+  false ('ref part'), ValueType/plain DataType→AttributeDefinition
+  (7.8.4.3.14), Enumeration→EnumerationDefinition with literals as
+  EnumerationUsage features, ConstraintBlock→ConstraintDefinition
+  (7.8.5.3.1), plain Class→OccurrenceDefinition + Class-typed Property→
+  (ref) OccurrenceUsage (7.7.4.2.37), Actor→PartDefinition (7.7.13.3.1),
+  Generalization→Subclassification (7.7.4.2.12), Comment→Documentation
+  (7.4.2.1.9 ToDocumentation_Init) with an explicit Annotation
+  relationship, untyped Property→Feature.
+- `transform_xmi(path)`: R1→R2→R3 entry - xmi21.read_xmi21 feeds the
+  transformer; roots must carry xmi:type (UML-20090901 dialect rule).
+
+## Dialect facts pinned
+
+- The v1 runtime's redefines/subsets are metadata, NOT storage aliases:
+  writing FeatureTyping.type stores under 'type'; 'general'/'specific'
+  stay empty. Conformance checks therefore read the redefining ends.
+- Documentation owned via OwningMembership has owner = the membership
+  (this runtime's KerML chain), and Annotation's derived back-ends
+  (annotatingElement, ownedAnnotation) cannot be populated - the
+  Annotation relationship itself is carried on the Documentation. Both
+  documented, both check-visible.
+- The UML-20090901 reader does not deserialize the `<aggregation>` child
+  (recorded in unmapped_features), so an XMI-fed composite Property
+  transforms referential rather than silently composite - recorded, never
+  lost.
+- Metaclasses with their own normative mappings (Behavior/StateMachine,
+  UseCase, Signal, InformationItem, Interface, TestCase, Requirement,
+  InterfaceBlock) are excluded from the plain-Class catch-all and raise
+  UnmappedFeature (later waves) instead of mapping to OccurrenceDefinition.
+
+## Honest elisions
+
+- Multiplicities: v1 upperValue/lowerValue have no settable AS end
+  (MultiplicityRange bounds are derived unions; no
+  FeatureMultiplicityMembership storage in the runtime). The textual
+  pipeline carries them; the AS wave does not yet.
+- Annotation derived back-ends (above).
+- Everything the textual emitter elides/annotates (ProxyPort, imports,
+  interactions) is unchanged AS-side: UnmappedFeature.
+
+## Result
+
+- check_v1_to_v2_as.py: 33 checks - R1 leg (hand-written v1 XMI 2.1 →
+  xmi21 → transform → AS graph, 8), R3 wave-A mappings (17), R2 runtime
+  wiring over the transformed graph (5), **parity with the validated
+  textual pipeline** (the AS graph renders, via an independent minimal
+  renderer in the check, to byte-identical notation vs v1_to_v2.py for
+  the same model), honesty (3).
+- Suites: 45 + 60 + 47 + 32 + 28 + 26 + 12 + 25 + 48 + 20 + 42 + 19 + 18
+  + 26 + 33 = **481 checks**, all green (corpus suites verified
+  environment-blocked: /mnt/TBFox mount absent this session; identical
+  failure with changes stashed).

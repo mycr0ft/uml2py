@@ -6389,6 +6389,43 @@ def _finish():
             setattr(c, n, d)
 _finish()
 
+class _MemberAlias:
+    """KerML redefinition alias: read/write the storage end
+    (Relationship.ownedRelatedElement) through the redefining
+    name (KerML §7.3.1.3: redefinition makes any reference to the
+    redefined member resolve to the redefining one)."""
+    def __get__(self, inst, cls=None):
+        if inst is None: return self
+        return inst.ownedRelatedElement
+    def __set__(self, inst, value):
+        el = getattr(inst, 'ownedRelatedElement', None)
+        if hasattr(el, 'append'):
+            el.append(value)
+        else:
+            inst._vals['ownedRelatedElement'] = value
+
+# redefinition aliases (storage through ownedRelatedElement)
+Membership.memberElement = _MemberAlias()
+OwningMembership.memberElement = _MemberAlias()
+FeatureMembership.memberElement = _MemberAlias()
+FeatureMembership.ownedMemberFeature = _MemberAlias()
+
+def _type_feature(self):
+    """Type.feature (§7.4.1.2): the features directly featured by
+    this Type — the memberElements of owned FeatureMemberships.
+    Computed; the CMOF XMI end is a derived union."""
+    out, seen = [], set()
+    for r in self.ownedRelationship:
+        if isinstance(r, FeatureMembership):
+            for e in r.ownedRelatedElement:
+                if isinstance(e, Feature) and id(e) not in seen:
+                    seen.add(id(e))
+                    out.append(e)
+    return out
+
+Type.feature = property(_type_feature)
+Classifier.feature = property(_type_feature)
+
 def metaclass(name):
     """Look up a generated metaclass by metamodel name."""
     for c in _CLASSES:
