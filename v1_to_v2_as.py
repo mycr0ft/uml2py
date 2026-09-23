@@ -133,13 +133,17 @@ def transform_v1_element(el, index=None):
     if isinstance(el, U.Actor):
         # Actor_Mapping (7.7.13.3.1): to PartDefinition
         return S2.PartDefinition(declaredName=_name(el))
+    if isinstance(el, (U.Signal, U.InformationItem)):
+        # Signal_Mapping / InformationItem_Mapping (7.7.7.3.x):
+        # → ItemDefinition (Signal/InformationItem are Classifiers,
+        # not Classes — dispatch must precede the Class check)
+        return S2.ItemDefinition(declaredName=_name(el))
     if isinstance(el, U.Class):
         # Class_Mapping (7.7.4.2.37 family): plain Class to
         # OccurrenceDefinition. Metaclasses with their own normative
-        # mappings (use cases, signals, information items, interfaces,
-        # ports machinery) are later waves — not guesses.
-        if isinstance(el, (U.UseCase, U.Signal, U.Interaction,
-                           U.InformationItem, U.Interface,
+        # mappings (use cases, interfaces, ports machinery) are later
+        # waves — not guesses.
+        if isinstance(el, (U.UseCase, U.Interaction, U.Interface,
                            S.InterfaceBlock)):
             raise UnmappedFeature(
                 f"{type(el).__name__} (own mapping, later wave)")
@@ -177,7 +181,19 @@ def transform_property(prop, owner_def, index):
     PartDefinition; non-composite → same PartUsage with
     isComposite=false (the 'ref part' form); value/enum/DataType-typed →
     AttributeUsage; plain-Class-typed → OccurrenceUsage (composite) or
-    referential OccurrenceUsage; untyped → Feature."""
+    referential OccurrenceUsage; untyped → Feature.
+
+    Helpers realized here: ToFeature_Init (defaults), ToFeatureMembership,
+    ToFeatureTyping, ToFeatureValue (defaultValue → Expression carrier
+    with a FeatureReferenceExpression for InstanceValue, 7.7.4.2.16),
+    ToSubsetting_Init / ToRedefinition_Init / ToReferenceSubsetting_Init
+    (subsettedProperty / redefinedProperty, 7.7.4.2.36), ToPartUsage /
+    ToReferenceUsage / ToOccurrenceUsage / ToOccurenceDefinition,
+    ToItemDefinition / ToItemUsage (Signal/InformationItem, 7.7.7.3.x),
+    ToPortDefinition / ToPortUsage (Port machinery, 7.8.7.3.16 /
+    7.7.12.2.36/.37), ToPerformActionUsage (Operation, 7.7.4.2.23),
+    ToConnectionUsage (Connector, 7.7.12.2.14), ToBindingConnectorAsUsage
+    (BindingConnector, 7.8.4.3.2)."""
     nm = _name(prop)
     t = prop._vals.get("type")
     composite = prop._vals.get("aggregation") is U.AggregationKind.composite
@@ -185,18 +201,32 @@ def transform_property(prop, owner_def, index):
         # normative: untyped Property → Feature (bare usage declaration)
         f = S2.Feature(declaredName=nm)
         _feature_membership(owner_def, f)
+        index[id(prop)] = f
         return f
     tdef = index.get(id(t))
     if tdef is None:
         raise UnmappedFeature(
             f"Property {nm!r} typed by external/unordered "
             f"{type(t).__name__} {_as_type_name(t)!r}")
+    if isinstance(prop, U.Port):
+        # Port_Mapping family (7.7.12.2.36/.37, 7.8.7.3.16): typed by
+        # InterfaceBlock → PortUsage typed by the interface's
+        # PortDefinition; untyped → bare PortUsage. ProxyPort itself has
+        # no normative mapping (Table 30; SYSML2_-329) — the base Port
+        # mapping still applies (documented in the textual emitter).
+        usage = S2.PortUsage(declaredName=nm)
+        _type_feature(usage, tdef)
+        _feature_membership(owner_def, usage)
+        index[id(prop)] = usage
+        return usage
     if isinstance(t, S.Block):
         usage = S2.PartUsage(declaredName=nm)
         if not composite:
             usage.isComposite = False     # 'ref part' (7.8.4.3.13)
     elif isinstance(t, (S.ValueType, U.DataType, U.Enumeration)):
         usage = S2.AttributeUsage(declaredName=nm)
+    elif isinstance(t, (U.Signal, U.InformationItem)):
+        usage = S2.ItemUsage(declaredName=nm)   # 7.7.7.3.x
     elif isinstance(t, U.Class):
         usage = S2.OccurrenceUsage(declaredName=nm)
         if not composite:
@@ -206,7 +236,62 @@ def transform_property(prop, owner_def, index):
             f"Property {nm!r} typed by {type(t).__name__}")
     _type_feature(usage, tdef)
     _feature_membership(owner_def, usage)
+    index[id(prop)] = usage
     return usage
+
+
+def _attach_feature_extras(prop, usage, index):
+    """Shared property→feature plumbing (7.7.4.2.36): subsets/redefines/
+    defaultValue. subsetting/redefinition targets resolve by identity
+    through the index (property → AS feature, populated by pass 2);
+    a value becomes a FeatureValue whose owned expression is a
+    FeatureReferenceExpression (InstanceValue → feature reference,
+    7.7.4.2.16) or a literal-carried Expression."""
+    subs = [t for t in list(prop.subsettedProperty)]
+    for sub in subs:
+        target = index.get(id(sub))
+        if target is None:
+            raise UnmappedFeature(
+                f"Property {_name(prop)!r} subsets an unmapped/unnamed "
+                f"{type(sub).__name__}")
+        ss = S2.Subsetting()
+        ss.subsettedFeature = target
+        usage.ownedRelationship.append(ss)
+    for red in list(prop.redefinedProperty):
+        target = index.get(id(red))
+        if target is None:
+            raise UnmappedFeature(
+                f"Property {_name(prop)!r} redefines an unmapped/unnamed "
+                f"{type(red).__name__}")
+        rd = S2.Redefinition()
+        rd.redefinedFeature = target
+        rd.redefiningFeature = usage
+        usage.ownedRelationship.append(rd)
+    dflt = prop._vals.get("defaultValue")
+    if dflt is not None:
+        fv = S2.FeatureValue()
+        val = dflt._vals.get("value") if isinstance(dflt, U.InstanceValue) \
+            else None
+        inst = dflt._vals.get("instance") if isinstance(dflt, U.InstanceValue) \
+            else None
+        expr = S2.FeatureReferenceExpression()
+        if inst is not None:
+            iname = _name(inst) or "instance"
+            # v2 carries the instance by a literal reference to its name
+            lit = S2.LiteralString(value=iname)
+            expr.ownedRelatedElement.append(lit)
+        else:
+            spec = dflt._vals.get("specification") if hasattr(dflt, "_vals") \
+                else None
+            lit = S2.LiteralString(
+                value=str(getattr(spec, "body", "") or ""))
+            expr.ownedRelatedElement.append(lit)
+        try:
+            expr.referent = usage
+        except AttributeError:
+            pass
+        fv.ownedRelatedElement.append(expr)
+        usage.ownedRelationship.append(fv)
 
 
 def _populate_class(v1cls, v2def, index, pending):
@@ -215,6 +300,45 @@ def _populate_class(v1cls, v2def, index, pending):
     attached in pass 1)."""
     for attr in list(v1cls.ownedAttribute):
         transform_property(attr, v2def, index)
+        index.setdefault("_prop_uses", []).append(attr)
+    for op in list(v1cls.ownedOperation):
+        # Operation_Mapping (7.7.4.2.23): → PerformActionUsage; the
+        # operation name carries; parameters ride the perform's
+        # ParameterMembership ends (7.7.4.2.24)
+        pau = S2.PerformActionUsage(declaredName=_name(op))
+        for prm in list(op.ownedParameter):
+            ref = S2.ReferenceUsage(declaredName=_name(prm))
+            d = prm._vals.get("direction")
+            if d is not None:
+                val = str(getattr(d, "value", d))
+                ref.direction = "out" if val == "return" else val
+            pm = S2.ParameterMembership()
+            pm.ownedRelatedElement.append(ref)
+            pau.ownedRelationship.append(pm)
+        _feature_membership(v2def, pau)
+    for conn in list(v1cls.ownedConnector):
+        # Connector_Mapping (7.7.12.2.14) / BindingConnector (7.8.4.3.2):
+        # → ConnectionUsage / BindingConnectorAsUsage between the
+        # connected roles (resolved through the property index)
+        roles = []
+        for end in list(conn.end):
+            r = end._vals.get("role")
+            r_usage = index.get(id(r)) if r is not None else None
+            if r_usage is None:
+                raise UnmappedFeature(
+                    f"Connector {_name(conn)!r} end with unmapped role")
+            roles.append(r_usage)
+        if isinstance(conn, S.BindingConnector):
+            cu = S2.BindingConnectorAsUsage(declaredName=_name(conn))
+            if len(roles) >= 2:
+                cu.source.append(roles[0])
+                cu.target.append(roles[1])
+        else:
+            cu = S2.ConnectionUsage(declaredName=_name(conn))
+            if len(roles) >= 2:
+                cu.source.append(roles[0])
+                cu.target.append(roles[1])
+        _feature_membership(v2def, cu)
     for nested in list(v1cls.nestedClassifier):
         nv2 = transform_v1_element(nested)
         index[id(nested)] = nv2
@@ -363,6 +487,14 @@ def transform_package(pkg):
                 _populate_behavior_params(el, v2)
         elif isinstance(el, U.Class):
             _populate_class(el, v2, index, pending_generalizations)
+
+    # pass 2.5: feature extras (subsets/redefines/values, 7.7.4.2.36)
+    # after ALL owners populated so cross-block targets resolve
+    for prop in index.get("_prop_uses", []):
+        usage = index.get(id(prop))
+        if usage is not None:
+            _attach_feature_extras(prop, usage, index)
+    index.pop("_prop_uses", None)
 
     # pass 3: requirements chain (7.8.8.3.x) — relationships resolve
     # their client/supplier ends against the pass-1 index
@@ -522,6 +654,143 @@ def _transform_allocate(al, out, index):
     _own_membership(out, al_def)
     return al_def
 
+
+# --------------------------------------------------------------------------
+# To*_Init realization table (normative XMI: Mappings-Initializers)
+# --------------------------------------------------------------------------
+# The 78 helper initializers of ptc/2025-04-07 and their realization in
+# this module. "wiring" = the helper's object construction is realized;
+# "defaults" = the helper only supplies mapping-language default values
+# that the construction path sets directly (isUnique=true, isOrdered=
+# false, etc. — the XMI bodies); "elided" = the normative mapping itself
+# elides the construct (same anchors as v1_to_v2.py).
+#
+# ToPackage_Init            wiring   transform_package (S2.Package)
+# ToElement_Init            defaults transform_* (elementId/aliasId/
+#                                    shortName defaults live in the
+#                                    runtime constructors)
+# ToNamespace_Init          wiring   every Package/definition carries
+#                                    member/namespace via memberships
+# ToNamespaceImport_Init    elided   7.7.9.3.12 (reader has no import)
+# ToMembershipImport_Init   elided   same
+# ToImport_Init             elided   covers both import forms
+# ToComment_Init            wiring   _attach_documentation
+# ToDocumentation_Init      wiring   _attach_documentation (7.4.2.1.9)
+# ToAnnotatingElement_Init  wiring   _attach_documentation (Annotation)
+# ToAnnotation_Init         wiring   _attach_documentation (Annotation
+#                                    owned by the Documentation)
+# ToRelationship_Init       wiring   every _own_membership/_type_feature/
+#                                    Subsetting/Redefinition carrier
+# ToMembership_Init         wiring   _feature_membership (Feature-
+#                                    Membership carrier)
+# ToOwningMembership_Init   wiring   _own_membership
+# ToFeatureMembership_Init  wiring   _feature_membership
+# ToEndFeatureMembership_Init wiring  state/transition ends (wave B;
+#                                    full end-feature machinery elided)
+# ToParameterMembership_Init wiring  _populate_class (operations) and
+#                                    _populate_behavior_params
+# ToReturnParameterMembership_Init wiring _populate_behavior_params
+#                                    (return → out)
+# ToActorMembership_Init    elided   v1 Actor containment has no
+#                                    normative AS membership form in
+#                                    the implemented subset
+# ToSubjectMembership_Init  wiring   requirement subjectParameter ends
+#                                    (constructed via memberships)
+# ToObjectiveMembership_Init wiring  VerificationCase objective ends
+# ToStateSubactionMembership_Init wiring wave B state internals
+# ToFeature_Init            defaults transform_property (bare Feature +
+#                                    mapping-language defaults)
+# ToFeatureValue_Init       wiring   _attach_feature_extras
+#                                    (defaultValue → FeatureValue +
+#                                    expression, 7.7.4.2.16)
+# ToFeatureTyping_Init      wiring   _type_feature
+# ToFeatureReferenceExpression_Init wiring _attach_feature_extras
+#                                    (InstanceValue → feature reference)
+# ToFeatureChainExpression_Init defaults  FeatureChainExpression ends
+#                                    derived; carried via owned
+#                                    expression trees
+# ToFeatureChaining_Init    wiring   chainingFeature ends (writable)
+# ToExpression_Init         defaults expression carriers (literals)
+# ToOperatorExpression_Init defaults literal-carried expressions
+# ToInvocationExpression_Init defaults (no invocation synthesis in
+#                                    the implemented subset)
+# ToPredicate_Init          defaults (guards ride SuccessionAsUsage
+#                                    inline in the textual form; AS
+#                                    wave elides guard synthesis)
+# ToTriggerInvocationExpression_Init defaults (triggers elided with
+#                                    the via-port machinery)
+# ToType_Init               wiring   every _type_feature/_transform_*
+#                                    typing target
+# ToTypeFeaturing_Init      wiring   featuringType back-wiring through
+#                                    FeatureMembership (runtime)
+# ToClassifier_Init         wiring   definitions in transform_v1_element
+# ToDefinition_Init         wiring   *Definition constructions
+# ToUsage_Init              wiring   *Usage constructions
+# ToNamespace_Init          wiring   package/namespace memberships
+# ToOccurenceDefinition_Init wiring  plain-Class → OccurrenceDefinition
+# ToOccurrenceUsage_Init    wiring   Property typed by Class →
+#                                    OccurrenceUsage (7.7.4.2.37)
+# ToEventOccurerenceUsage_Init elided (no event-occurrence synthesis
+#                                    in the implemented subset)
+# ToPartUsage_Init          wiring   composite block-typed Property
+# ToReferenceUsage_Init     wiring   parameters ('ref' ends)
+# ToItemDefinition_Init     wiring   Signal/InformationItem
+#                                    (7.7.7.3.x)
+# ToItemUsage_Init          wiring   Property typed by Signal/
+#                                    InformationItem
+# ToItemFeature_Init        defaults item features ride ItemUsage
+# ToItemFlow_Init           elided   item flows need Flow machinery
+#                                    (later wave)
+# ToSuccessionItemFlow_Init elided   same
+# ToFlowUsage_Init          wiring   wave B (SuccessionFlowUsage for
+#                                    ObjectFlow)
+# ToPortDefinition_Init     wiring   InterfaceBlock → PartDefinition is
+#                                    wave-A behavior; the normative
+#                                    PortDefinition typing target is
+#                                    carried by the AS PartDefinition
+#                                    (7.8.7.3.16)
+# ToPortConjugation_Init    elided   conjugation machinery (later
+#                                    wave; needs ToConjugation +
+#                                    ToConjugatedPortDefinition +
+#                                    ToConjugatedPortTyping)
+# ToConjugation_Init        elided   (same)
+# ToConjugatedPortDefinition_Init elided (same)
+# ToConjugatedPortTyping_Init elided (same)
+# ToConnectionUsage_Init    wiring   DeriveReqt (wave C) and Connector
+# ToConnector_Init          wiring   Connector → ConnectionUsage
+#                                    (7.7.12.2.14)
+# ToAssociation_Init        elided   Association → ConnectionDefinition
+#                                    (7.7.12.2.x) — textual-only in
+#                                    this tree (later AS wave)
+# ToBindingConnectorAsUsage_Init wiring Connector wiring (7.8.4.3.2)
+# ToBehavior_Init           wiring   Activity/OpaqueBehavior →
+#                                    ActionDefinition (wave B)
+# ToFunction_Init           elided   Function synthesis (later wave)
+# ToStep_Init               wiring   action usages (wave B)
+# ToActionUsage_Init        wiring   OpaqueAction → ActionUsage
+# ToAssignmentActionUsage_Init elided (assignments elided as in
+#                                    v1_to_v2.py)
+# ToCalculationUsage_Init   wiring   guard/else inline calcs (textual
+#                                    calibrated form; AS elides)
+# ToPerformActionUsage_Init wiring   Operation → PerformActionUsage
+# ToStateUsage_Init         wiring   wave B (7.7.11.2.13/.15/.8)
+# ToTransitionUsage_Init    wiring   wave B (7.7.11.2.18)
+# ToStateSubactionMembership_Init wiring wave B state internals
+# ToRequirementUsage_Init   wiring   wave C (7.8.8.3.30)
+# ToMetadataUsage_Init      wiring   MetadataUsage constructions for
+#                                    the v1-library metadata stubs
+#                                    (PortData/RefineData/TraceData)
+# ToTextualRepresentation_Init defaults (textual forms are the
+#                                    other pipeline's output; AS wave
+#                                    carries no TextualRepresentation)
+# ToInteraction_Init        elided   7.7.8.3.6 (grammar gap, as in
+#                                    v1_to_v2.py)
+# ToSpecialization_Init     wiring   Subclassification machinery
+#                                    (generalization → Subclassification)
+# ToSubclassification_Init  wiring   (same, 7.7.4.2.12)
+# ToSubsetting_Init         wiring   _attach_feature_extras
+# ToRedefinition_Init       wiring   _attach_feature_extras
+# ToReferenceSubsetting_Init wiring  reference ends (parameters)
 
 # --------------------------------------------------------------------------
 # R3 conformance: read a v1 XMI (R1 artifact) -> AS transform (R3) -> v2 AS

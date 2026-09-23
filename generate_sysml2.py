@@ -417,7 +417,11 @@ def main(argv):
                         "source", "target",
                         "verifiedRequirement", "satisfiedRequirement",
                         "satisfyingFeature", "ownedObjectiveRequirement",
-                        "ownedSubjectParameter", "requirementDefinition"}
+                        "ownedSubjectParameter", "requirementDefinition",
+                        "value", "featureWithValue", "referent",
+                        "metadataDefinition", "portDefinition",
+                        "feature", "task", "behavior", "definition",
+                        "actionDefinition", "chainingFeature"}
     for a in attr_by_id.values():
         if a.name in WRITABLE_DERIVED:
             a.derived = False

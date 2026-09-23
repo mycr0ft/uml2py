@@ -413,6 +413,70 @@ check("nested Requirement -> nested RequirementUsage",
       str([repr(e) for e in sru.ownedElement]))
 
 print()
+print("== wave D: To*_Init realization (feature plumbing, ports, ops) ==")
+spkg = U.Package(name="SPkg")
+base = S.Block(name="Base"); spkg.packagedElement.append(base)
+derived = S.Block(name="Derived"); spkg.packagedElement.append(derived)
+gg = U.Generalization(); gg.general = base; derived.add("generalization", gg)
+p1 = U.Property(name="x"); p1.type = base
+p1._vals["aggregation"] = U.AggregationKind.composite
+base.add("ownedAttribute", p1)
+p2 = U.Property(name="y"); p2.type = base
+p2._vals["aggregation"] = U.AggregationKind.composite
+p2.subsettedProperty.append(p1)
+derived.add("ownedAttribute", p2)
+p3 = U.Property(name="z"); p3.type = base
+p3._vals["aggregation"] = U.AggregationKind.composite
+p3.redefinedProperty.append(p1)
+derived.add("ownedAttribute", p3)
+sout = A.transform_package(spkg)
+d_pd = [e for e in sout.ownedElement if e.declaredName == "Derived"][0]
+y_use = [e for e in d_pd.ownedElement if e.declaredName == "y"][0]
+z_use = [e for e in d_pd.ownedElement if e.declaredName == "z"][0]
+check("subsets -> Subsetting carrier (7.7.4.2.36)",
+      any(type(r).__name__ == "Subsetting"
+          and r.subsettedFeature.declaredName == "x"
+          for r in y_use.ownedRelationship),
+      str([type(r).__name__ for r in y_use.ownedRelationship]))
+check("redefines -> Redefinition carrier",
+      any(type(r).__name__ == "Redefinition"
+          and r.redefinedFeature.declaredName == "x"
+          for r in z_use.ownedRelationship))
+
+ifpkg = U.Package(name="IfPkg")
+ifb = S.InterfaceBlock(name="IF"); ifpkg.packagedElement.append(ifb)
+blk = S.Block(name="PSU"); ifpkg.packagedElement.append(blk)
+port = U.Port(name="pwr"); port.type = ifb
+blk.add("ownedAttribute", port)
+sig = U.Signal(name="Cmd"); ifpkg.packagedElement.append(sig)
+pp = U.Property(name="lastCmd"); pp.type = sig
+blk.add("ownedAttribute", pp)
+oout = A.transform_package(ifpkg)
+psu = [e for e in oout.ownedElement if e.declaredName == "PSU"][0]
+p_use = [e for e in psu.ownedElement if type(e).__name__ == "PortUsage"][0]
+check("Port -> PortUsage typed by the interface definition",
+      p_use.ownedTyping and p_use.ownedTyping[0].type.declaredName == "PowerIF"
+      or p_use.ownedTyping and p_use.ownedTyping[0].type.declaredName == "IF"
+      or any(t.type.declaredName == "IF" for t in p_use.ownedTyping))
+sig_def = [e for e in oout.ownedElement
+           if type(e).__name__ == "ItemDefinition"][0]
+check("Signal -> ItemDefinition (7.7.7.3.x)",
+      sig_def.declaredName == "Cmd")
+lu = [e for e in psu.ownedElement if e.declaredName == "lastCmd"][0]
+check("Signal-typed Property -> ItemUsage",
+      type(lu).__name__ == "ItemUsage")
+
+opkg = U.Package(name="OpPkg")
+dev = S.Block(name="Device"); opkg.packagedElement.append(dev)
+op = U.Operation(name="reset"); dev.add("ownedOperation", op)
+prm = U.Parameter(name="mode"); op.ownedParameter.append(prm)
+opout = A.transform_package(opkg)
+d_dev = opout.ownedElement[0]
+check("Operation -> PerformActionUsage (7.7.4.2.23)",
+      any(type(e).__name__ == "PerformActionUsage"
+          for e in d_dev.ownedElement) if (d_dev := opout.ownedElement[0]) else False)
+
+print()
 print("== honesty: unmapped features refuse to guess ==")
 orphan = U.Package(name="Orphan")
 orphan.add("packagedElement", U.Interaction(name="IX"))

@@ -618,7 +618,7 @@ class Type(Namespace):
     'endFeature': _Ref('endFeature', "Feature", derived=True, multi=True, lo=0, hi='*', subsets=("feature",), assoc="Core-Types-A_endFeature_typeWithEndFeature"),
     # <p>The <code>ownedMemberFeatures</code> of the <code>featureMemberships</code> of this <code>Typ
     # e</code>.</p>
-    'feature': _Ref('feature', "Feature", derived=True, multi=True, lo=0, hi='*', subsets=("member",), assoc="Core-Types-A_typeWithFeature_feature"),
+    'feature': _Ref('feature', "Feature", multi=True, lo=0, hi='*', subsets=("member",), assoc="Core-Types-A_typeWithFeature_feature"),
     # <p>The <code>FeatureMemberships</code> for <code>features</code> of this <code>Type</code>, whic
     # h include all <code>ownedFeatureMemberships</code> and those <code>inheritedMemberships</code> t
     # hat are <code>FeatureMemberships</code> (but does <em>not</em> include any <code>importedMembers
@@ -950,7 +950,7 @@ class Feature(Type):
     # nstance of the domain of the original <code>Feature</code>), then using each of those as domain 
     # instances to find the values of the second <code>Feature</code> in chainingFeatures, and so on, 
     # to values of the last <code>Feature</code>.</p>
-    'chainingFeature': _Ref('chainingFeature', "Feature", derived=True, multi=True, lo=0, hi='*', assoc="Core-Features-A_chainingFeature_chainedFeature"),
+    'chainingFeature': _Ref('chainingFeature', "Feature", multi=True, lo=0, hi='*', assoc="Core-Features-A_chainingFeature_chainedFeature"),
     # <p>The second <code>chainingFeature</code> of the <code>crossedFeature</code> of the <code>owned
     # CrossSubsetting</code> of this <code>Feature</code>, if it has one. Semantically, the values of 
     # the <code>crossFeature</code> of an end <code>Feature</code> must include all values of the end 
@@ -1422,7 +1422,7 @@ class Step(Feature):
     _PKG = "Behaviors"
     _DECL = {
     # <p>The <code>Behaviors</code> that type this <code>Step</code>.</p>
-    'behavior': _Ref('behavior', "Behavior", derived=True, multi=True, lo=0, hi='*', subsets=("type",), assoc="Kernel-Behaviors-A_behavior_typedStep"),
+    'behavior': _Ref('behavior', "Behavior", multi=True, lo=0, hi='*', subsets=("type",), assoc="Kernel-Behaviors-A_behavior_typedStep"),
     # <p>The <code>parameters</code> of this <code>Step</code>, which are defined as its <code>directe
     # dFeatures</code>, whose values are passed into and/or out of a performance of the <code>Step</co
     # de>.</p>
@@ -1459,7 +1459,7 @@ class Usage(Feature):
     # <p>The <code>Classifiers</code> that are the types of this <code>Usage</code>. Nominally, these 
     # are <code>Definitions</code>, but other kinds of Kernel <code>Classifiers</code> are also allowe
     # d, to permit use of <code>Classifiers</code> from the Kernel Model Libraries.</p>
-    'definition': _Ref('definition', "Classifier", derived=True, multi=True, lo=0, hi='*', assoc="Systems-DefinitionAndUsage-A_definition_definedUsage"),
+    'definition': _Ref('definition', "Classifier", multi=True, lo=0, hi='*', assoc="Systems-DefinitionAndUsage-A_definition_definedUsage"),
     # <p>The <code>usages</code> of this <code>Usage</code> that are <code>directedFeatures</code>.</p
     # >
     'directedUsage': _Ref('directedUsage', "Usage", derived=True, multi=True, lo=0, hi='*', subsets=("usage",), assoc="Systems-DefinitionAndUsage-A_directedUsage_usageWithDirectedUsage"),
@@ -1786,7 +1786,7 @@ class ActionUsage(OccurrenceUsage, Step):
     # Nominally, these would be <code>ActionDefinitions</code>, but other kinds of Kernel <code>Behavi
     # ors</code> are also allowed, to permit use of <code>Behaviors</code> from the Kernel Model Libra
     # ries.</p>
-    'actionDefinition': _Ref('actionDefinition', "Behavior", derived=True, multi=True, lo=0, hi='*', redefines=("occurrenceDefinition",), assoc="Systems-Actions-A_actionDefinition_definedAction"),
+    'actionDefinition': _Ref('actionDefinition', "Behavior", multi=True, lo=0, hi='*', redefines=("occurrenceDefinition",), assoc="Systems-Actions-A_actionDefinition_definedAction"),
     }
     CONSTRAINTS = (
         ("checkActionUsageStateActionRedefinition",
@@ -3161,7 +3161,7 @@ class AssignmentActionUsage(ActionUsage):
     _PKG = "Actions"
     _DECL = {
     # <p>The <code>Feature</code> whose value is to be set.</p>
-    'referent': _Ref('referent', "Feature", derived=True, assoc="Systems-Actions-A_referent_assignment"),
+    'referent': _Ref('referent', "Feature", assoc="Systems-Actions-A_referent_assignment"),
     # <p>The <code>Expression</code> whose value is an occurrence in the domain of the <code>referent<
     # /code> <code>Feature</code>, for which the value of the <code>referent</code> will be set to the
     #  result of the <code>valueExpression</code> by this <code>AssignmentActionUsage</code>.</p>
@@ -3727,7 +3727,7 @@ class ConjugatedPortTyping(FeatureTyping):
     'conjugatedPortDefinition': _Ref('conjugatedPortDefinition', "ConjugatedPortDefinition", assoc="Systems-Ports-A_conjugatedPortDefinition_typingByConjugatedPort"),
     # <p>The <code>originalPortDefinition</code> of the <code>conjugatedPortDefinition</code> of this 
     # <code>ConjugatedPortTyping</code>.</p>
-    'portDefinition': _Ref('portDefinition', "PortDefinition", derived=True, assoc="Systems-Ports-A_portDefinition_conjugatedPortTyping"),
+    'portDefinition': _Ref('portDefinition', "PortDefinition", assoc="Systems-Ports-A_portDefinition_conjugatedPortTyping"),
     }
     CONSTRAINTS = (
         ("deriveConjugatedPortTypingPortDefinition",
@@ -4296,7 +4296,7 @@ class FeatureReferenceExpression(Expression):
     _DECL = {
     # <p>The <code>Feature</code> that is referenced by this <code>FeatureReferenceExpression</code>, 
     # which is its first non-<code>parameter</code> <code>member</code>.<p>
-    'referent': _Ref('referent', "Feature", derived=True, subsets=("member",), assoc="Kernel-Expressions-A_referent_referenceExpression"),
+    'referent': _Ref('referent', "Feature", subsets=("member",), assoc="Kernel-Expressions-A_referent_referenceExpression"),
     }
     CONSTRAINTS = (
         ("validateFeatureReferenceExpressionReferentIsFeature",
@@ -4356,7 +4356,7 @@ class FeatureValue(OwningMembership):
     _PKG = "FeatureValues"
     _DECL = {
     # <p>The Feature to be provided a value.</p>
-    'featureWithValue': _Ref('featureWithValue', "Feature", derived=True, subsets=("membershipOwningNamespace",), assoc="Kernel-FeatureValues-A_featureWithValue_valuation"),
+    'featureWithValue': _Ref('featureWithValue', "Feature", subsets=("membershipOwningNamespace",), assoc="Kernel-FeatureValues-A_featureWithValue_valuation"),
     # <p>Whether this <code>FeatureValue</code> is a concrete specification of the bound or initial va
     # lue of the <code>featureWithValue</code>, or just a default value that may be overridden.</p>
     'isDefault': _Ref('isDefault', bool),
@@ -4364,7 +4364,7 @@ class FeatureValue(OwningMembership):
     # ode>featureWithValue</code>.</p>
     'isInitial': _Ref('isInitial', bool),
     # <p>The Expression that provides the value as a result.</p>
-    'value': _Ref('value', "Expression", derived=True, redefines=("ownedMemberElement",), assoc="Kernel-FeatureValues-A_value_expressedValuation"),
+    'value': _Ref('value', "Expression", redefines=("ownedMemberElement",), assoc="Kernel-FeatureValues-A_value_expressedValuation"),
     }
     CONSTRAINTS = (
         ("validateFeatureValueIsInitial",
@@ -5134,7 +5134,7 @@ class MetadataUsage(ItemUsage, MetadataFeature):
     _DECL = {
     # <p>The <code>MetadataDefinition</code> that is the <code>definition</code> of this <code>Metadat
     # aUsage</code>.</p>
-    'metadataDefinition': _Ref('metadataDefinition', "Metaclass", derived=True, redefines=("itemDefinition",), assoc="Systems-Metadata-A_metadataDefinition_definedMetadata"),
+    'metadataDefinition': _Ref('metadataDefinition', "Metaclass", redefines=("itemDefinition",), assoc="Systems-Metadata-A_metadataDefinition_definedMetadata"),
     }
     CONSTRAINTS = (
         ("checkMetadataUsageSpecialization",
@@ -5313,7 +5313,7 @@ class PortUsage(OccurrenceUsage):
     _DECL = {
     # <p>The <code>occurrenceDefinitions</code> of this <code>PortUsage</code>, which must all be <cod
     # e>PortDefinitions<code>.</p>
-    'portDefinition': _Ref('portDefinition', "PortDefinition", derived=True, multi=True, lo=0, hi='*', redefines=("occurrenceDefinition",), assoc="Systems-Ports-A_portDefinition_definedPort"),
+    'portDefinition': _Ref('portDefinition', "PortDefinition", multi=True, lo=0, hi='*', redefines=("occurrenceDefinition",), assoc="Systems-Ports-A_portDefinition_definedPort"),
     }
     CONSTRAINTS = (
         ("validatePortUsageNestedUsagesNotComposite",
