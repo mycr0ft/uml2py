@@ -413,7 +413,8 @@ def main(argv):
     WRITABLE_DERIVED = {"ownedTyping", "ownedSpecialization", "ownedFeature",
                         "owningFeature", "owningType",
                         "owningClassifier", "subclassifier",
-                        "superclassifier", "ownedMemberElement"}
+                        "superclassifier", "ownedMemberElement",
+                        "source", "target"}
     for a in attr_by_id.values():
         if a.name in WRITABLE_DERIVED:
             a.derived = False

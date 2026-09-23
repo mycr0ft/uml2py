@@ -130,14 +130,20 @@ def transform_v1_element(el):
     if isinstance(el, U.Class):
         # Class_Mapping (7.7.4.2.37 family): plain Class to
         # OccurrenceDefinition. Metaclasses with their own normative
-        # mappings (behaviors, state machines, use cases, signals,
+        # mappings (use cases, signals, information items, interfaces,
         # ports/requirements machinery) are later waves — not guesses.
-        if isinstance(el, (U.Behavior, U.UseCase, U.Signal,
+        if isinstance(el, (U.UseCase, U.Signal, U.Interaction,
                            U.InformationItem, U.Interface,
                            S.TestCase, S.Requirement, S.InterfaceBlock)):
             raise UnmappedFeature(
                 f"{type(el).__name__} (own mapping, later wave)")
         return S2.OccurrenceDefinition(declaredName=_name(el))
+    if isinstance(el, U.StateMachine):
+        # StateMachine_Mapping (7.7.11.2.16): to StateDefinition
+        return S2.StateDefinition(declaredName=_name(el))
+    if isinstance(el, (U.Activity, U.OpaqueBehavior)):
+        # Activity_Mapping (7.7.3.3.1) / OpaqueBehavior: ActionDefinition
+        return S2.ActionDefinition(declaredName=_name(el))
     raise UnmappedFeature(type(el).__name__)
 
 
@@ -204,6 +210,104 @@ def _populate_class(v1cls, v2def, index, pending):
         pending.append((v2def, g))
 
 
+def _populate_statemachine(sm, v2def, index):
+    """StateMachine internals (7.7.11.2.x): Regions inlined — States/
+    Pseudostates/FinalStates → StateUsage; Transitions → TransitionUsage
+    with source/target; initial states elided (SYSML2_-203)."""
+    for member in list(sm.ownedMember):
+        if isinstance(member, U.Region):
+            for st in list(member.ownedMember):
+                if isinstance(st, U.Transition):
+                    continue
+                if isinstance(st, U.Pseudostate) \
+                        and st._vals.get("kind") is U.PseudostateKind.initial:
+                    continue  # elided (SYSML2_-203)
+                su = S2.StateUsage(declaredName=_name(st))
+                _own_membership(v2def, su)
+                index[id(st)] = su
+        for tr in list(member.ownedMember):
+            if not isinstance(tr, U.Transition):
+                continue
+            src, tgt = tr._vals.get("source"), tr._vals.get("target")
+            if isinstance(src, U.Pseudostate) \
+                    and src._vals.get("kind") is U.PseudostateKind.initial:
+                continue  # elided (SYSML2_-203)
+            src_obj = index.get(id(src))
+            tgt_obj = index.get(id(tgt))
+            if src_obj is None or tgt_obj is None:
+                raise UnmappedFeature(
+                    f"Transition {_name(tr)!r} to element outside the "
+                    "state machine's owned states")
+            tu = S2.TransitionUsage(declaredName=_name(tr))
+            tu.source = src_obj
+            tu.target = tgt_obj
+            _own_membership(v2def, tu)
+            index[id(tr)] = tu
+
+
+def _populate_activity(act, v2def, index):
+    """Activity internals (7.7.3.3.x): nodes → action usages /
+    control-node usages; edges → SuccessionAsUsage (ControlFlow) or
+    SuccessionFlowUsage (ObjectFlow) with source/target."""
+    nodes = list(act.node)
+    edges = list(act.edge)
+    for n in nodes:
+        nm = _name(n)
+        if isinstance(n, U.OpaqueAction):
+            au = S2.ActionUsage(declaredName=nm)
+            _own_membership(v2def, au)
+            index[id(n)] = au
+        elif isinstance(n, U.DecisionNode):
+            du = S2.DecisionNode(declaredName=nm)
+            _own_membership(v2def, du)
+            index[id(n)] = du
+        elif isinstance(n, U.MergeNode):
+            mu = S2.MergeNode(declaredName=nm)
+            _own_membership(v2def, mu)
+            index[id(n)] = mu
+        elif isinstance(n, (U.InitialNode, U.FinalNode)):
+            # normative: elided (initial → source feature of outgoing
+            # edges; final → done-subsetted feature; 7.7.3.3.22)
+            continue
+        else:
+            raise UnmappedFeature(
+                f"Activity node {type(n).__name__} (later wave)")
+    for e in edges:
+        src, tgt = e._vals.get("source"), e._vals.get("target")
+        src_obj, tgt_obj = index.get(id(src)), index.get(id(tgt))
+        if src_obj is None or tgt_obj is None:
+            # initial/final nodes elided: the edge itself is elided
+            if isinstance(src, (U.InitialNode, U.FinalNode)) or \
+                    isinstance(tgt, (U.InitialNode, U.FinalNode)):
+                continue
+            raise UnmappedFeature(
+                f"edge {_name(e)!r} touching unmapped node")
+        if isinstance(e, U.ObjectFlow):
+            se = S2.SuccessionFlowUsage(declaredName=_name(e))
+        else:
+            se = S2.SuccessionAsUsage(declaredName=_name(e))
+        # KerML succession ends are multi-valued feature chains; the
+        # wave-A mapping yields exactly one source and one target
+        se.source.append(src_obj)
+        se.target.append(tgt_obj)
+        _own_membership(v2def, se)
+        index[id(e)] = se
+
+
+def _populate_behavior_params(behavior, v2def):
+    """Parameter → ReferenceUsage with direction (7.7.4.2.24; return →
+    out per the Activity textual example)."""
+    for p in list(behavior.ownedParameter):
+        ref = S2.ReferenceUsage(declaredName=_name(p))
+        d = p._vals.get("direction")
+        if d is not None:
+            val = str(getattr(d, "value", d))
+            # normative (7.7.4.2.24): return -> out per the Activity
+            # textual example
+            ref.direction = "out" if val == "return" else val
+        _feature_membership(v2def, ref)
+
+
 def transform_package(pkg):
     """MainMapping (§7.2.2.4): transform a v1 Package (and contents)
     into a v2 AS Package. Returns the v2 root Package.
@@ -232,7 +336,13 @@ def transform_package(pkg):
     # pass 2: features / nested members / collected generalizations
     for el in list(pkg.ownedMember):
         v2 = index.get(id(el))
-        if isinstance(el, U.Class):
+        if isinstance(el, (U.StateMachine, U.Activity, U.OpaqueBehavior)):
+            if isinstance(el, U.StateMachine):
+                _populate_statemachine(el, v2, index)
+            else:
+                _populate_activity(el, v2, index)
+                _populate_behavior_params(el, v2)
+        elif isinstance(el, U.Class):
             _populate_class(el, v2, index, pending_generalizations)
 
     for sub_def, g in pending_generalizations:

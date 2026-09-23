@@ -5825,14 +5825,14 @@ class TransitionUsage(ActionUsage):
     'guardExpression': _Ref('guardExpression', "Expression", derived=True, multi=True, lo=0, hi='*', assoc="Systems-States-A_guardExpression_guardedTransition"),
     # <p>The source <code>ActionUsage</code> of this <code>TransitionUsage</code>, which becomes the <
     # code>source</code> of the <code>succession</code> for the <code>TransitionUsage</code>.</p>
-    'source': _Ref('source', "ActionUsage", derived=True, assoc="Systems-States-A_source_outgoingTransition"),
+    'source': _Ref('source', "ActionUsage", assoc="Systems-States-A_source_outgoingTransition"),
     # <p>The <code>Succession</code> that is the <code>ownedFeature</code> of this <code>TransitionUsa
     # ge</code>, which, if the <code>TransitionUsage</code> is triggered, asserts the temporal orderin
     # g of the <code>source</code> and <code>target</code>.</p>
     'succession': _Ref('succession', "Succession", derived=True, assoc="Systems-States-A_succession_linkedTransition"),
     # <p>The target <code>ActionUsage</code> of this <code>TransitionUsage<code>, which is the <code>t
     # argetFeature</code> of the <code>succession</code> for the <code>TransitionUsage</code>.</p>
-    'target': _Ref('target', "ActionUsage", derived=True, assoc="Systems-States-A_target_incomingTransition"),
+    'target': _Ref('target', "ActionUsage", assoc="Systems-States-A_target_incomingTransition"),
     # <p>The <code>AcceptActionUsages</code> that define the triggers of this <code>TransitionUsage</c
     # ode>, which are the <code>ownedFeatures</code> of the <code>TransitionUsage</code> related to it
     #  by <code>TransitionFeatureMemberships</code> with <code>kind = trigger</code>, which must all b

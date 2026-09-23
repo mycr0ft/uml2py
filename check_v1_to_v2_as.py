@@ -315,14 +315,59 @@ check("AS graph renders to the same notation the textual pipeline emits",
       "differences above" if as_textual != textual else "identical")
 
 print()
+print("== wave B: state machines and activities ==")
+smpkg = U.Package(name="Beh")
+sm = U.StateMachine(name="OpMode")
+region = U.Region(name="r")
+sm.region.append(region)
+idle = U.State(name="Idle")
+running = U.State(name="Running")
+region.subvertex.append(idle)
+region.subvertex.append(running)
+t1 = U.Transition(name="power_on")
+region.transition.append(t1)
+t1.source = idle
+t1.target = running
+smpkg.add("packagedElement", sm)
+beh = A.transform_package(smpkg)
+sm_def = beh.ownedElement[0]
+sm_members = [type(e).__name__ for e in sm_def.ownedElement]
+check("state def holds 2 StateUsages + 1 TransitionUsage",
+      sm_members.count("StateUsage") == 2
+      and sm_members.count("TransitionUsage") == 1, str(sm_members))
+tu = [e for e in sm_def.ownedElement
+      if type(e).__name__ == "TransitionUsage"][0]
+check("transition source/target wired",
+      tu.source.declaredName == "Idle" and tu.target.declaredName == "Running")
+
+actpkg = U.Package(name="ActPkg")
+act = U.Activity(name="Run")
+a1 = U.OpaqueAction(name="step1"); act.node.append(a1)
+a2 = U.OpaqueAction(name="step2"); act.node.append(a2)
+fl = U.ControlFlow(name="f1"); act.edge.append(fl)
+fl.source = a1; fl.target = a2
+actpkg.add("packagedElement", act)
+out2 = A.transform_package(actpkg)
+act_def = out2.ownedElement[0]
+kinds = [type(e).__name__ for e in act_def.ownedElement]
+check("activity: 2 ActionUsages + 1 SuccessionAsUsage",
+      kinds.count("ActionUsage") == 2
+      and kinds.count("SuccessionAsUsage") == 1, str(kinds))
+se = [e for e in act_def.ownedElement
+      if type(e).__name__ == "SuccessionAsUsage"][0]
+check("succession source/target wired",
+      se.source[0].declaredName == "step1"
+      and se.target[0].declaredName == "step2")
+
+print()
 print("== honesty: unmapped features refuse to guess ==")
 orphan = U.Package(name="Orphan")
-orphan.add("packagedElement", U.StateMachine(name="SM"))
+orphan.add("packagedElement", U.Interaction(name="IX"))
 try:
     A.transform_package(orphan)
-    check("UnmappedFeature raised for StateMachine", False)
+    check("UnmappedFeature raised for Interaction", False)
 except A.UnmappedFeature as e:
-    check("UnmappedFeature raised for StateMachine", "StateMachine" in str(e),
+    check("UnmappedFeature raised for Interaction", "Interaction" in str(e),
           str(e))
 ext = U.Package(name="Ext")
 blk = S.Block(name="B"); ext.add("packagedElement", blk)
