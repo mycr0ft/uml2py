@@ -360,6 +360,59 @@ check("succession source/target wired",
       and se.target[0].declaredName == "step2")
 
 print()
+print("== wave C: requirements chain (7.8.8.3.x) ==")
+rpkg = U.Package(name="ReqPkg")
+power = S.Requirement(name="Power"); power._vals["id"] = "R1"
+power._vals["text"] = "system shall provide 10 kW"
+veh = S.Block(name="Vehicle")
+sat = S.Satisfy(name="sat1"); sat.client.append(veh); sat.supplier.append(power)
+rpkg.packagedElement.extend([power, veh, sat])
+tc = S.TestCase(name="PowerTest")
+verify = S.Verify(name="v1"); verify.client.append(tc); verify.supplier.append(power)
+rpkg.packagedElement.extend([tc, verify])
+derived = S.Requirement(name="Derived"); derived._vals["id"] = "R2"
+dr = S.DeriveReqt(name="d1"); dr.client.append(derived); dr.supplier.append(power)
+rpkg.packagedElement.extend([derived, dr])
+rout = MT if False else A  # transformer module
+rp2 = A.transform_package(rpkg)
+kinds = [type(e).__name__ for e in rp2.ownedElement]
+check("Requirement->RequirementUsage + TestCase->VerificationCaseDefinition",
+      kinds.count("RequirementUsage") == 2
+      and kinds.count("VerificationCaseDefinition") == 1, str(kinds))
+ru0 = rp2.ownedElement[0]
+check("v1 id carried on aliasIds", ru0.aliasIds == ["R1"], str(ru0.aliasIds))
+req_docs = [e for e in ru0.ownedElement if type(e).__name__ == "Documentation"]
+check("v1 text -> Documentation",
+      len(req_docs) == 1 and req_docs[0].body == "system shall provide 10 kW",
+      str([d.body for d in req_docs]))
+sat_u = [e for e in rp2.ownedElement
+         if type(e).__name__ == "SatisfyRequirementUsage"][0]
+check("Satisfy ends: satisfyingFeature/satisfiedRequirement",
+      sat_u.satisfyingFeature.declaredName == "Vehicle"
+      and sat_u.satisfiedRequirement.declaredName == "Power")
+tc_def = [e for e in rp2.ownedElement
+          if type(e).__name__ == "VerificationCaseDefinition"][0]
+rvms = [e for e in tc_def.ownedElement
+        if type(e).__name__ == "RequirementVerificationMembership"]
+check("Verify -> RequirementVerificationMembership in the TC",
+      len(rvms) == 1 and rvms[0].verifiedRequirement.declaredName == "Power")
+cu = [e for e in rp2.ownedElement if type(e).__name__ == "ConnectionUsage"]
+check("DeriveReqt -> ConnectionUsage with source/target",
+      len(cu) == 1 and cu[0].source[0].declaredName == "Derived"
+      and cu[0].target[0].declaredName == "Power")
+nest = U.Package(name="Nest")
+sys_req = S.Requirement(name="System"); sys_req._vals["id"] = "S1"
+sub = S.Requirement(name="Sub")
+nest.packagedElement.append(sys_req)
+sys_req.add("nestedClassifier", sub)
+nout = A.transform_package(nest)
+sru = nout.ownedElement[0]
+check("nested Requirement -> nested RequirementUsage",
+      any(type(e).__name__ == "RequirementUsage"
+          and e.declaredName == "Sub" for e in sru.ownedElement),
+      str([repr(e) for e in sru.ownedElement]))
+
+print()
 print("== honesty: unmapped features refuse to guess ==")
 orphan = U.Package(name="Orphan")
 orphan.add("packagedElement", U.Interaction(name="IX"))

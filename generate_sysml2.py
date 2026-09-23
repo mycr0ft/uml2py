@@ -414,7 +414,10 @@ def main(argv):
                         "owningFeature", "owningType",
                         "owningClassifier", "subclassifier",
                         "superclassifier", "ownedMemberElement",
-                        "source", "target"}
+                        "source", "target",
+                        "verifiedRequirement", "satisfiedRequirement",
+                        "satisfyingFeature", "ownedObjectiveRequirement",
+                        "ownedSubjectParameter", "requirementDefinition"}
     for a in attr_by_id.values():
         if a.name in WRITABLE_DERIVED:
             a.derived = False

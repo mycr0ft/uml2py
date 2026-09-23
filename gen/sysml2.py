@@ -3546,7 +3546,7 @@ class RequirementUsage(ConstraintUsage):
     'requiredConstraint': _Ref('requiredConstraint', "ConstraintUsage", derived=True, multi=True, lo=0, hi='*', assoc="Systems-Requirements-A_requiredConstraint_requiringRequirement"),
     # <p>The <code>RequirementDefinition</code> that is the single <code>definition</code> of this <co
     # de>RequirementUsage</code>.</p>
-    'requirementDefinition': _Ref('requirementDefinition', "RequirementDefinition", derived=True, redefines=("constraintDefinition",), assoc="Systems-Requirements-A_requirementDefinition_definedRequirement"),
+    'requirementDefinition': _Ref('requirementDefinition', "RequirementDefinition", redefines=("constraintDefinition",), assoc="Systems-Requirements-A_requirementDefinition_definedRequirement"),
     # <p>The <code>parameters</code> of this <code>RequirementUsage</code> that represent stakeholders
     #  for the requirement.</p>
     'stakeholderParameter': _Ref('stakeholderParameter', "PartUsage", derived=True, multi=True, lo=0, hi='*', subsets=("usage",), assoc="Systems-Requirements-A_stakeholderParameter_stakholderOwningRequirement"),
@@ -5276,7 +5276,7 @@ class ObjectiveMembership(FeatureMembership):
     _DECL = {
     # <p>The RequirementUsage that is the <code>ownedMemberFeature</code> of this RequirementUsage.</p
     # >
-    'ownedObjectiveRequirement': _Ref('ownedObjectiveRequirement', "RequirementUsage", derived=True, composite=True, assoc="Systems-Cases-A_ownedObjectiveRequirement_owningObjectiveMembership"),
+    'ownedObjectiveRequirement': _Ref('ownedObjectiveRequirement', "RequirementUsage", composite=True, assoc="Systems-Cases-A_ownedObjectiveRequirement_owningObjectiveMembership"),
     }
     CONSTRAINTS = (
         ("validateObjectiveMembershipOwningType",
@@ -5461,7 +5461,7 @@ class RequirementVerificationMembership(RequirementConstraintMembership):
     # <p> The <code>RequirementUsage</code> that is identified as being verified. It is the <code>refe
     # rencedConstraint</code> of the <code>RequirementVerificationMembership</code> considered as a <c
     # ode>RequirementConstraintMembership</code>, which must be a <code>RequirementUsage</code>.</p>
-    'verifiedRequirement': _Ref('verifiedRequirement', "RequirementUsage", derived=True, redefines=("referencedConstraint",), assoc="Systems-VerificationCases-A_verifiedRequirement_requirementVerification"),
+    'verifiedRequirement': _Ref('verifiedRequirement', "RequirementUsage", redefines=("referencedConstraint",), assoc="Systems-VerificationCases-A_verifiedRequirement_requirementVerification"),
     }
     CONSTRAINTS = (
         ("validateRequirementVerificationMembershipOwningType",
@@ -5512,11 +5512,11 @@ class SatisfyRequirementUsage(RequirementUsage, AssertConstraintUsage):
     # this <code>SatisfyRequirementUsage</code>. It is the <code>assertedConstraint</code> of the <cod
     # e>SatisfyRequirementUsage</code> considered as an <code>AssertConstraintUsage</code>, which must
     #  be a <code>RequirementUsage</code>.</p>
-    'satisfiedRequirement': _Ref('satisfiedRequirement', "RequirementUsage", derived=True, redefines=("assertedConstraint",), assoc="Systems-Requirements-A_satisfiedRequirement_requirementSatisfaction"),
+    'satisfiedRequirement': _Ref('satisfiedRequirement', "RequirementUsage", redefines=("assertedConstraint",), assoc="Systems-Requirements-A_satisfiedRequirement_requirementSatisfaction"),
     # <p>The <code>Feature</code> that represents the actual subject that is asserted to satisfy the <
     # code>satisfiedRequirement</code>. The <code>satisfyingFeature</code> is bound to the <code>subje
     # ctParameter</code> of the <code>SatisfyRequirementUsage</code>.</p>
-    'satisfyingFeature': _Ref('satisfyingFeature', "Feature", derived=True, assoc="Systems-Requirements-A_satisfyingFeature_satisfiedRequirement"),
+    'satisfyingFeature': _Ref('satisfyingFeature', "Feature", assoc="Systems-Requirements-A_satisfyingFeature_satisfiedRequirement"),
     }
     CONSTRAINTS = (
         ("checkSatisfyRequirementUsageBindingConnector",
@@ -5704,7 +5704,7 @@ class SubjectMembership(ParameterMembership):
     _DECL = {
     # <p>The <code>Usage</code< that is the <code>ownedMemberParameter</code> of this <code>SubjectMem
     # bership</code>.</p>
-    'ownedSubjectParameter': _Ref('ownedSubjectParameter', "Usage", derived=True, composite=True, assoc="Systems-Requirements-A_ownedSubjectParameter_owningSubjectMembership"),
+    'ownedSubjectParameter': _Ref('ownedSubjectParameter', "Usage", composite=True, assoc="Systems-Requirements-A_ownedSubjectParameter_owningSubjectMembership"),
     }
     CONSTRAINTS = (
         ("validateSubjectMembershipOwningType",
@@ -6044,7 +6044,7 @@ class VerificationCaseDefinition(CaseDefinition):
     # <p>The <code>RequirementUsages</code> verified by this <code>VerificationCaseDefinition</code>, 
     # which are the <code>verifiedRequirements</code> of all <code>RequirementVerificationMemberships<
     # /code> of the <code>objectiveRequirement</code>.</p>
-    'verifiedRequirement': _Ref('verifiedRequirement', "RequirementUsage", derived=True, multi=True, lo=0, hi='*', assoc="Systems-VerificationCases-A_verifiedRequirement_verifyingCaseDefinition"),
+    'verifiedRequirement': _Ref('verifiedRequirement', "RequirementUsage", multi=True, lo=0, hi='*', assoc="Systems-VerificationCases-A_verifiedRequirement_verifyingCaseDefinition"),
     }
     CONSTRAINTS = (
         ("deriveVerificationCaseDefinitionVerifiedRequirement",
@@ -6067,7 +6067,7 @@ class VerificationCaseUsage(CaseUsage):
     # <p>The <code>RequirementUsages</code> verified by this <code>VerificationCaseUsage</code>, which
     #  are the <code>verifiedRequirements</code> of all <code>RequirementVerificationMemberships</code
     # > of the <code>objectiveRequirement</code>.</p>
-    'verifiedRequirement': _Ref('verifiedRequirement', "RequirementUsage", derived=True, multi=True, lo=0, hi='*', assoc="Systems-VerificationCases-A_verifiedRequirement_verifyingCase"),
+    'verifiedRequirement': _Ref('verifiedRequirement', "RequirementUsage", multi=True, lo=0, hi='*', assoc="Systems-VerificationCases-A_verifiedRequirement_verifyingCase"),
     }
     CONSTRAINTS = (
         ("deriveVerificationCaseUsageVerifiedRequirement",

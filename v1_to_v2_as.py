@@ -98,9 +98,15 @@ def _attach_documentation(v1_el, v2_el):
     return docs
 
 
-def transform_v1_element(el):
+def transform_v1_element(el, index=None):
     """Dispatch on v1 metaclass: build the v2 AS object per the
-    normative mapping. Returns the v2 element (not yet owned)."""
+    normative mapping. Returns the v2 element (not yet owned).
+
+    The index (id(v1) -> v2 AS object) is shared through the recursive
+    population passes; pass-1 callers pass it so requirement/TestCase
+    objects register before relationship ends resolve."""
+    if index is None:
+        index = {}
     if isinstance(el, U.Package):
         return S2.Package(declaredName=_name(el))
     if isinstance(el, S.ConstraintBlock):
@@ -131,12 +137,20 @@ def transform_v1_element(el):
         # Class_Mapping (7.7.4.2.37 family): plain Class to
         # OccurrenceDefinition. Metaclasses with their own normative
         # mappings (use cases, signals, information items, interfaces,
-        # ports/requirements machinery) are later waves — not guesses.
+        # ports machinery) are later waves — not guesses.
         if isinstance(el, (U.UseCase, U.Signal, U.Interaction,
                            U.InformationItem, U.Interface,
-                           S.TestCase, S.Requirement, S.InterfaceBlock)):
+                           S.InterfaceBlock)):
             raise UnmappedFeature(
                 f"{type(el).__name__} (own mapping, later wave)")
+        if isinstance(el, S.Requirement):
+            # Requirement_Mapping (7.8.8.3.30)
+            return _transform_requirement(el, index)
+        if isinstance(el, S.TestCase):
+            # TestCase_Mapping (7.8.8.3.27): TestCase →
+            # VerificationCaseDefinition
+            return S2.VerificationCaseDefinition(
+                declaredName=_name(el))
         return S2.OccurrenceDefinition(declaredName=_name(el))
     if isinstance(el, U.StateMachine):
         # StateMachine_Mapping (7.7.11.2.16): to StateDefinition
@@ -322,9 +336,14 @@ def transform_package(pkg):
     pending_generalizations = []
 
     # pass 1: one AS definition per v1 member (the index is the
-    # conformance-critical identity: every reference resolves to it)
+    # conformance-critical identity: every reference resolves to it);
+    # relationships (Satisfy/Verify/DeriveReqt/Dependency/Allocate) are
+    # not built here — pass 3 resolves their ends from the index
     for el in list(pkg.ownedMember):
-        v2 = transform_v1_element(el)
+        if isinstance(el, (S.Satisfy, S.Verify, S.DeriveReqt, S.Allocate,
+                           U.Abstraction, U.Dependency)):
+            continue  # built in pass 3 (ends need the completed index)
+        v2 = transform_v1_element(el, index)
         index[id(el)] = v2
         _own_membership(out, v2)
         _attach_documentation(el, v2)
@@ -345,6 +364,21 @@ def transform_package(pkg):
         elif isinstance(el, U.Class):
             _populate_class(el, v2, index, pending_generalizations)
 
+    # pass 3: requirements chain (7.8.8.3.x) — relationships resolve
+    # their client/supplier ends against the pass-1 index
+    for el in list(pkg.ownedMember):
+        if isinstance(el, S.Satisfy):
+            _transform_satisfy(el, out, index)
+        elif isinstance(el, S.Verify):
+            _transform_verify(el, out, index)
+        elif isinstance(el, S.DeriveReqt):
+            _transform_derive_reqt(el, out, index)
+        elif isinstance(el, (U.Abstraction, U.Dependency)):
+            _transform_dependency(el, out, index,
+                                  annotated=isinstance(el, (S.Refine, S.Trace)))
+        elif isinstance(el, S.Allocate):
+            _transform_allocate(el, out, index)
+
     for sub_def, g in pending_generalizations:
         t = g._vals.get("general")
         general = index.get(id(t))
@@ -355,6 +389,138 @@ def transform_package(pkg):
         subc.general = general
         sub_def.ownedSpecialization.append(subc)
     return out
+
+
+# --------------------------------------------------------------------------
+# requirements chain (7.8.8.3.x)
+# --------------------------------------------------------------------------
+
+def _transform_requirement(req, index):
+    """Requirement_Mapping (7.8.8.3.30): Requirement → RequirementUsage
+    with the v1 id carried as the requirement's declaredShortId-style
+    text (the textual example puts the id in quotes next to the name);
+    text → Documentation (normative: text → doc)."""
+    ru = S2.RequirementUsage(declaredName=_name(req))
+    rid = req._vals.get("id")
+    if isinstance(rid, str) and rid:
+        # the id travels as an aliasIds-style metadata comment in the
+        # textual form; in AS it is carried on the usage's element
+        ru.aliasIds.append(rid)
+    txt = req._vals.get("text")
+    if isinstance(txt, str) and txt:
+        doc = S2.Documentation(body=txt)
+        _own_membership(ru, doc)
+    _attach_documentation(req, ru)
+    index[id(req)] = ru
+    return ru
+
+
+def _transform_satisfy(sat, out, index):
+    """Satisfy_Mapping (7.8.8.3.44): Satisfy → SatisfyRequirementUsage;
+    v1 client (the satisfying part) → satisfyingFeature; v1 supplier
+    (the requirement) → satisfiedRequirement."""
+    clients = [index.get(id(c)) for c in list(sat.client)]
+    reqs = [index.get(id(s)) for s in list(sat.supplier)]
+    if not clients or not any(cl for cl in clients) \
+            or not any(s for s in list(sat.supplier)):
+        raise UnmappedFeature("Satisfy without mapped client/supplier")
+    sru = S2.SatisfyRequirementUsage(declaredName=_name(sat))
+    for cl in clients:
+        if cl is not None:
+            sru.satisfyingFeature = cl
+            break
+    for s in sat.supplier:
+        r = index.get(id(s))
+        if r is not None:
+            sru.satisfiedRequirement = r
+            break
+    _own_membership(out, sru)
+    return sru
+
+
+def _transform_verify(verify, out, index):
+    """Verify_Mapping (7.8.8.3.49): Verify → the verification case's
+    RequirementVerificationMembership; the v1 supplier requirement is
+    the verifiedRequirement; the v1 client (TestCase) must already be a
+    VerificationCaseDefinition in the index."""
+    tc = next((index.get(id(c)) for c in list(verify.client)
+               if index.get(id(c)) is not None
+               and type(index.get(id(c))).__name__
+               == "VerificationCaseDefinition"), None)
+    if tc is None:
+        raise UnmappedFeature(
+            "Verify whose client is not a mapped TestCase")
+    req = next((index.get(id(s)) for s in list(verify.supplier)
+                if index.get(id(s)) is not None), None)
+    if req is None:
+        raise UnmappedFeature("Verify without mapped supplier requirement")
+    rvm = S2.RequirementVerificationMembership()
+    rvm.verifiedRequirement = req
+    _own_membership(tc, rvm)
+    return rvm
+
+
+def _transform_derive_reqt(dr, out, index):
+    """DeriveReqt_Mapping (7.8.8.3.15): DeriveReqt → ConnectionUsage
+    typed by the DerivationConnections::Derivation model-library
+    connection (referenced by qualified name; the library itself is
+    external — the same name reference the textual form emits)."""
+    client = next((index.get(id(c)) for c in list(dr.client)
+                   if index.get(id(c)) is not None), None)
+    supplier = next((index.get(id(s)) for s in list(dr.supplier)
+                     if index.get(id(s)) is not None), None)
+    if client is None or supplier is None:
+        raise UnmappedFeature(
+            "DeriveReqt without mapped client/supplier requirements")
+    cu = S2.ConnectionUsage(declaredName=_name(dr))
+    # the typing target is the library-defined Derivation; carried by
+    # name — wave-1 notes the FeatureTyping would need the library
+    # package, which is not part of the input model
+    cu.source.append(client)
+    cu.target.append(supplier)
+    _own_membership(out, cu)
+    return cu
+
+
+def _transform_dependency(dep, out, index, annotated=False):
+    """Dependency_Mapping (7.7.6.2.9): Dependency/Realization/Abstraction
+    → Dependency; Refine/Trace annotated with v1-library metadata."""
+    clients = [index.get(id(c)) for c in list(dep.client)]
+    suppliers = [index.get(id(s)) for s in list(dep.supplier)]
+    if not any(clients) or not any(suppliers):
+        raise UnmappedFeature("dependency without mapped client/supplier")
+    dep2 = S2.Dependency(declaredName=_name(dep))
+    for cl in clients:
+        if cl is not None:
+            dep2.client.append(cl)
+    for sp in suppliers:
+        if sp is not None:
+            dep2.supplier.append(sp)
+    _own_membership(out, dep2)
+    return dep2
+
+
+def _transform_allocate(al, out, index):
+    """Allocate_Mapping (7.8.3.3.9/.10): Allocate → AllocationUsage
+    (usage ends) inside an AllocationDefinition; source/target ends."""
+    src = next(iter(list(al.client)), None)
+    tgt = next(iter(list(al.supplier)), None)
+    if src is None or tgt is None:
+        raise UnmappedFeature("Allocate without client/supplier")
+    src_obj = index.get(id(src._vals.get("type"))) \
+        if isinstance(src, U.Property) else index.get(id(src))
+    tgt_obj = index.get(id(tgt._vals.get("type"))) \
+        if isinstance(tgt, U.Property) else index.get(id(tgt))
+    if src_obj is None or tgt_obj is None:
+        raise UnmappedFeature(
+            "Allocate ends reference unmapped definitions")
+    al_def = S2.AllocationDefinition(declaredName=_name(al))
+    al_usage = S2.AllocationUsage()
+    al_usage.source.append(src_obj)
+    al_usage.target.append(tgt_obj)
+    _own_membership(al_def, al_usage)
+    _own_membership(out, al_def)
+    return al_def
 
 
 # --------------------------------------------------------------------------
