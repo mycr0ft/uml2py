@@ -192,6 +192,24 @@ The OMG transition document is on disk
 normative `To*_Init` initializer mappings and expected-syntax examples
 per mapping; `transition.txt` is the extracted text (kept out of the
 repository - reference corpus).
+
+**Edition note (2026-09-22):** the current OMG edition of this document is
+**Version 2.1 Beta 2 (Release 2026-07, dated August 2026)**, fetched from
+the Systems-Modeling/SysML-v2-Release GitHub repo
+(`doc/2b-SysML_v1_to_v2_Transformation.pdf`, cloned at
+`~/proj/third_party/SysML-v2-Release`). A full OCL-body diff against the
+Beta 4 working copy shows the same 780 `*_Mapping` classes and 79
+`To*_Init` helpers plus one added helper (`ToFlow_Init`, the Systems
+Library `Flow` connection target); the conformance clause (§2) is
+word-for-word identical. The substantive body edits are: OCL completions
+where Beta 4's rendered text was truncated at line-wraps (e.g.
+`CommentOwnership_Mapping.getMapped(c)` calls now complete), bullet
+reordering (isComposite/isParallel first), and event-kind completions in
+state/activity triggers (`UML::TimeEvent` named explicitly alongside
+`ChangeEvent` in StateDefinition/State/Transition/StructuredActivityNode
+trigger selects). None of these change any mapping implemented by
+v1_to_v2_as.py: the trigger-family mappings remain "*** not specified
+yet ***" stubs in both editions, so the Beta 4 anchors stand.
 `v1_to_v2.py` implements a clean-room emitter for the core structural core,
 each mapping anchored to the normative statement (quoted in the module
 docstring):
