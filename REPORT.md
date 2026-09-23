@@ -1575,13 +1575,95 @@ but constructing gen.sysml2 objects. Architecture:
 
 ## Result
 
-- check_v1_to_v2_as.py: 33 checks - R1 leg (hand-written v1 XMI 2.1 →
+- check_v1_to_v2_as.py: 50 checks - R1 leg (hand-written v1 XMI 2.1 →
   xmi21 → transform → AS graph, 8), R3 wave-A mappings (17), R2 runtime
   wiring over the transformed graph (5), **parity with the validated
   textual pipeline** (the AS graph renders, via an independent minimal
   renderer in the check, to byte-identical notation vs v1_to_v2.py for
-  the same model), honesty (3).
-- Suites: 45 + 60 + 47 + 32 + 28 + 26 + 12 + 25 + 48 + 20 + 42 + 19 + 18
-  + 26 + 33 = **481 checks**, all green (corpus suites verified
-  environment-blocked: /mnt/TBFox mount absent this session; identical
-  failure with changes stashed).
+  the same model), wave-B/C/D oracles (17), honesty (3).
+- Suites: 45 (UML) + 60 (profiles) + 47 (textual v1→v2, sysmlpy-fed) +
+  26 (sysml2) + 50 (AS transformer) + 19 (OCL) + 18 (EMOF) = **265
+  checks green this session**; corpus suites (DoDAF, mdzip, query,
+  xmi/cmof write) verified environment-blocked: /mnt/TBFox mount absent
+  (identical failure with changes stashed — pre-existing condition).
+
+## Conformance statement (§2 of ptc/2025-04-07) - final
+
+The clause defines three requirements. Full conformance = R1 + R2 + R3;
+"software developed only partially matching the applicable compliance
+points may claim only that the software was developed based on this
+specification" unless every R is met.
+
+**R1 - SysML v1 abstract syntax: MET (in substance).**
+gen/uml25.py (242 metaclasses, 620 properties, 449 normative OCL bodies
+carried as metadata) from the OMG UML 2.5.1 XMI, plus gen/sysml.py
+(SysML v1 profile, 56 stereotypes as Python mixin classes — a stereotype
+application IS the fold-in), gen/uaf.py, gen/uaf13.py, gen/bpmn.py.
+R1's "should import XMI" is satisfied by xmi21.py (XMI 2.1 instance
+dialect) and mdzip_import.py (MagicDraw .mdzip), both validated over
+real OMG-published/vendor corpora. Evidence: check.py 45, check_profiles
+60, check_dodaf 32 (corpus), check_mdzip_import 12-file stress set
+(corpus).
+
+**R2 - SysML v2 abstract syntax: MET.**
+gen/sysml2.py is generated from the OMG normative artifacts the clause
+names: SysML.xmi (ptc/25-02-15, "MOF XMI for the SysML v2 Abstract
+Syntax") + KerML.xmi (20250201). 175 metaclasses (82 KerML + 93 SysML
+v2), 428 properties, 7 enums, 623 normative constraints; stdlib-only,
+same _Ref/_RefList descriptor runtime as gen/uml25.py. Cross-file href
+resolution verified 175/175 (id-suffix rule + attr-id map + last-dash
+fallback). Evidence: check_sysml2.py 26 (MRO PartDefinition→…
+→Element, abstract guards, OwningMembership/FeatureTyping/
+Subclassification wiring, owner back-wire).
+
+**R3 - v1 AS → v2 AS transformation: MET for an identified subset.**
+v1_to_v2_as.py constructs gen.sysml2 objects from gen.uml25+gen.sysml
+objects, with the conformance-critical identity rule (one v1 element →
+one AS object; every typing/specialization end references the indexed
+object). All 78 normative To*_Init helpers carry an identified
+realization (wiring / defaults / elided — table embedded in source).
+Mapping coverage:
+
+| Family | Mappings | Anchors (ptc/2025-04-07) |
+|---|---|---|
+| structural | Block, Property, ValueType, Enumeration, ConstraintBlock, plain Class, Actor, Signal/InformationItem | 7.8.4.3.3/.13/.14, 7.8.5.3.1, 7.7.4.2.37, 7.7.13.3.1, 7.7.7.3.x |
+| behavioral | StateMachine/State/Transition (regions inlined, initial elided SYSML2_-203), Activity internals, Operations, Connectors | 7.7.11.2.x, 7.7.3.3.x, 7.7.4.2.23/.24, 7.7.12.2.14 |
+| requirements chain | Requirement, TestCase, Satisfy, Verify, DeriveReqt, Dependency, Allocate | 7.8.8.3.30/.27/.44/.49/.15, 7.7.6.2.9, 7.8.3.3.9/.10 |
+| feature plumbing | subsets/redefines/defaultValue, FeatureValue + FeatureReferenceExpression, Subsetting/Redefinition/ReferenceSubsetting | 7.7.4.2.36, 7.7.4.2.16 |
+| ports | Port→PortUsage typed by InterfaceBlock's definition | 7.7.12.2.36/.37, 7.8.7.3.16 |
+
+Per §2's mapping-dependency caveat, the claim is scoped: "the
+transformation as identified in this implementation's realization table;
+unimplemented mappings raise UnmappedFeature naming the v1 metaclass."
+
+**Identified elisions** (all shared with the validated textual emitter,
+each with its normative anchor): imports (7.7.9.3.12 — reader gap),
+ProxyPort (Table 30 lists no target; SYSML2_-329), interaction
+machinery (7.7.8.x — grammar gap), Table-11 interaction elements
+(7.7.8.2), via-port receiver machinery (7.7.2.3.1.17-.19),
+StateInvariant (7.7.8.3.17), conjugation machinery (ToConjugation
+family), multiplicity bounds in AS (derived unions; the textual
+pipeline carries them), AssignmentActionUsage/CalculationUsage AS
+carriers.
+
+**Honest deviations** (documented, check-visible): 23 derived ends
+emitted writable in gen/sysml2.py (the KerML AS carries them as derived
+unions; construction needs the carrier — WRITABLE_DERIVED in
+generate_sysml2.py); ownedElement computed over the membership chain
+(§7.3.2.3); Annotation derived back-ends runtime-elided.
+
+**Reproduce:**
+```
+python3 check.py && python3 check_profiles.py && \
+python3 check_sysml2.py && .venv/bin/python check_v1_to_v2_as.py
+# textual pipeline needs sysmlpy on the path:
+HOME=<repo-parent> PYTHONPATH=<sysmlpy-venv-site-packages> \
+  .venv/bin/python check_v1_to_v2.py
+```
+
+## Conformance posture
+
+This software was developed based on the OMG "SysML v2.0 Beta 4, Part 2:
+SysML v1 to SysML v2 Transformation" (ptc/2025-04-07) and satisfies its
+§2 requirements R1 and R2, and R3 for the identified mapping subset
+above. No conformance certification is claimed or implied.
